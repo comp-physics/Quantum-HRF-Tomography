@@ -1,6 +1,7 @@
 networkx>=3.3
 pygraphviz>=1.9
 matplotlib>=3.9.1
+pandas>=2.2.2
 scipy
 tqdm
 treelib>=1.7.0
