@@ -36,7 +36,7 @@ setuptools.setup(
     python_requires='>=3.8, <4',
     classifiers=[
         'Programming Language :: Python :: 3',
-        'License :: MIT',
+        'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
     ],
 )

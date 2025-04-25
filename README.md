@@ -8,7 +8,9 @@ This is the code that accompanies the following paper:
 
 
 
-### Hardware results on IBM quantum processor
+<div align="center">
+<img src="https://github.com/comp-physics/Quantum-HRF-Tomography/blob/master/assets/overview.png" height="300px"> 
+</div>
 
 
 
