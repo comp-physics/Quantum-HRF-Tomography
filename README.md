@@ -14,6 +14,16 @@ This is the code that accompanies the following paper:
 
 
 
+### Install 
+
+We recommend download all the files and finish the installation locally,
+
+```bash
+git clone https://github.com/comp-physics/Quantum-HRF-Tomography
+cd Quantum-HRF-Tomography
+pip install -e .
+```
+
 ### Citation
 
 
