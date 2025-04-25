@@ -167,49 +167,57 @@ def stabilizer_entropy(
 ### ============================== Quantum state overlap helper functions ==============================
 
 def swap_test(
-    psi1: np.ndarray,
-    psi2: np.ndarray
+    state1: np.ndarray | qiskit.QuantumCircuit,
+    state2: np.ndarray | qiskit.QuantumCircuit
 ) -> qiskit.QuantumCircuit:
     """
-    Build a SWAP test circuit to compare two statevectors.
+    Build a SWAP test circuit to compare two quantum states, specified as statevectors or preparation circuits.
 
     Args:
-        psi1: Statevector of first state as a 1D numpy array of length 2**num_qubits.
-        psi2: Statevector of second state (same length as psi1).
+        state1: A statevector (1D numpy array of length 2**n) or a QuantumCircuit preparing the first state on n qubits.
+        state2: A statevector (same number of amplitudes) or a QuantumCircuit preparing the second state on n qubits.
 
     Returns:
         A QuantumCircuit implementing the SWAP test, with:
           - Qubit 0 as ancilla.
-          - Qubits 1..num_qubits for psi1 preparation.
-          - Qubits num_qubits+1..2*num_qubits for psi2 preparation.
-          - Final Hadamard on ancilla. 
+          - Qubits 1..n for the first state.
+          - Qubits n+1..2n for the second state.
+          - Hadamard gates on the ancilla before and after controlled-SWAPs.
     """
-    # Determine number of qubits in each state register
-    num_qubits = int(np.log2(psi1.size))
-    if psi1.shape != psi2.shape:
-        raise ValueError("Statevectors must have the same shape.")
 
-    # Create circuit: 1 ancilla + two state registers
+    # Determine qubit count and build preparation circuits
+    if isinstance(state1, np.ndarray):
+        num_qubits = int(np.log2(state1.size))
+        prep1 = StatePreparation(state1)
+    elif isinstance(state1, QuantumCircuit):
+        prep1 = state1
+        num_qubits = prep1.num_qubits
+    else:
+        raise TypeError("state1 must be either a numpy statevector or a QuantumCircuit.")
+
+    if isinstance(state2, np.ndarray):
+        if state2.size != 2**num_qubits:
+            raise ValueError("state2 length does not match number of qubits.")
+        prep2 = StatePreparation(state2)
+    elif isinstance(state2, QuantumCircuit):
+        prep2 = state2
+        if prep2.num_qubits != num_qubits:
+            raise ValueError("state2 circuit qubit count does not match state1.")
+    else:
+        raise TypeError("state2 must be either a numpy statevector or a QuantumCircuit.")
+
+    # Build SWAP test circuit: ancilla + two registers
     qc = QuantumCircuit(2 * num_qubits + 1)
 
     # Prepare state registers
-    prep1 = StatePreparation(psi1)
-    prep2 = StatePreparation(psi2)
     qc.compose(prep1, list(range(1, 1 + num_qubits)), inplace=True)
     qc.compose(prep2, list(range(1 + num_qubits, 1 + 2 * num_qubits)), inplace=True)
     qc.barrier()
 
-    # Prepare ancilla and apply first Hadamard
+    # Perform SWAP test
     qc.append(HGate(), [0])
-
-    # Controlled SWAPs between corresponding qubits
     for i in range(num_qubits):
         qc.append(CSwapGate(), [0, 1 + i, 1 + num_qubits + i])
-
-    # Final Hadamard on ancilla
     qc.append(HGate(), [0])
 
     return qc
-
-
-
