@@ -192,14 +192,15 @@ def swap_test(
     # Create circuit: 1 ancilla + two state registers
     qc = QuantumCircuit(2 * num_qubits + 1)
 
-    # Prepare ancilla and apply first Hadamard
-    qc.append(HGate(), [0])
-
     # Prepare state registers
     prep1 = StatePreparation(psi1)
     prep2 = StatePreparation(psi2)
     qc.compose(prep1, list(range(1, 1 + num_qubits)), inplace=True)
     qc.compose(prep2, list(range(1 + num_qubits, 1 + 2 * num_qubits)), inplace=True)
+    qc.barrier()
+
+    # Prepare ancilla and apply first Hadamard
+    qc.append(HGate(), [0])
 
     # Controlled SWAPs between corresponding qubits
     for i in range(num_qubits):
