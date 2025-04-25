@@ -1,6 +1,14 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+main.py
+"""
+
 from __future__ import annotations
 import random
 import logging
+import warnings
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple 
 
 import numpy as np
@@ -9,15 +17,18 @@ import treelib
 from math import comb  
 from scipy import sparse  
 from scipy.sparse import coo_matrix
+import matplotlib.pyplot as plt
 
 import qiskit
 import mthree
+from qiskit.providers import Backend
 from qiskit.transpiler import generate_preset_pass_manager
 from qiskit_ibm_runtime import Session, SamplerV2 as Sampler
+from qiskit_aer.primitives import Sampler as Aer_Sampler
 from mthree import M3Mitigation
 import mthree.utils as mthree_utils
 
-
+# Public API
 __all__ = [
     "fix_random_seed",
     "hamming_weight",
@@ -345,7 +356,7 @@ def get_circuits(
 
 def get_samples(
     num_qubits: int,
-    sampler: Any,
+    sampler: Aer_Sampler | Sampler,
     circuits: List[qiskit.QuantumCircuit],
     parameters: np.ndarray
 ) -> List[np.ndarray]:
@@ -377,7 +388,7 @@ def get_samples_noisy(
     circuits: List[qiskit.QuantumCircuit],
     shots: int,
     parameters: np.ndarray,
-    backend_sim: Any,
+    backend_sim: Backend,
     error_mitigation: bool = False
 ) -> List[np.ndarray]:
     """
@@ -401,7 +412,7 @@ def get_samples_noisy(
         backend=backend_sim,
         layout_method="default",
         routing_method="sabre",
-        seed_transpiler=666
+        seed_transpiler=999
     )
     samples: List[np.ndarray] = []
 
@@ -421,6 +432,7 @@ def get_samples_noisy(
 
             # If this mapping hasn't been seen, calibrate a new mitigation object.
             if key not in mapping_mit:
+                print("=========== New M3 calibration detected ===========")
                 mit = M3Mitigation(backend_sim)
                 mit.cals_from_system(mapping)
                 mapping_mit[key] = mit
@@ -433,6 +445,7 @@ def get_samples_noisy(
         # Apply error mitigation to each result.
         for counts, mapping, key in counts_data:
             mit = mapping_mit[key]
+            # print(f"Applying M3 error mitigation with mapping: {mapping}")
             quasi = mit.apply_correction(counts, mapping)
 
             # Convert counts to a probability distribution.
@@ -460,7 +473,7 @@ def get_samples_noisy(
 def get_circuits_hardware(
     num_qubits: int,
     base_circuit: qiskit.QuantumCircuit,
-    device: Any
+    device: Backend
 ) -> List[qiskit.QuantumCircuit]:
     """
     Transpile a base circuit for hardware and generate variants with an appended Hadamard gate.
@@ -481,7 +494,7 @@ def get_circuits_hardware(
         backend=device,
         layout_method="default",
         routing_method="sabre",
-        seed_transpiler=666
+        seed_transpiler=999
     )
 
     circuits: List[qiskit.QuantumCircuit] = []
@@ -505,7 +518,7 @@ def get_samples_hardware(
     shots: int,
     circuits: List[qiskit.QuantumCircuit],
     parameters: np.ndarray,
-    device: Any,
+    device: Backend,
     error_mitigation: bool = True
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List[str], List[float]]:
     """
@@ -541,6 +554,7 @@ def get_samples_hardware(
         mapping = mthree_utils.final_measurement_mapping(circ)
         key = str(mapping)
         if error_mitigation and key not in mapping_mit:
+            print("=========== New M3 calibration detected ===========")
             mit = mthree.M3Mitigation(device)
             mit.cals_from_system(mapping)
             mapping_mit[key] = mit
@@ -584,22 +598,28 @@ def generate_random_forest(
     num_qubits: int,
     num_trees: int,
     samples: List[np.ndarray],
-    save_tree: bool = False
+    save_tree: bool = True
 ) -> np.ndarray:
     """
     Build multiple random spanning trees on a hypercube and aggregate signs by majority voting.
-    Optionally save visualizations of the first 10 trees to files.
+    Optionally save visualizations of the first 10 trees in a structured folder.
 
     Args:
         num_qubits: Cube dimension (log2 of state size).
         num_trees: Number of random trees to generate.
         samples: List of sample probability arrays used to compute weights.
-        save_tree: If True, save the first 10 tree plots as 'tree_{m}.png' without displaying.
+        save_tree: If True, save the first 10 tree plots under 'forest gallery/{num_qubits}-qubit/'.
 
     Returns:
         A 1D numpy array of length 2**num_qubits containing final +1/-1 signs.
     """
     signs_stack: Optional[np.ndarray] = None
+
+    # Prepare output directory if needed
+    if save_tree:
+        base_dir = Path("forest gallery") / f"{num_qubits}-qubit"
+        base_dir.mkdir(parents=True, exist_ok=True)
+
     for m in range(num_trees):
         # Step 1: generate random spanning tree
         tree, spanning = generate_hypercube_tree(num_qubits)
@@ -618,7 +638,6 @@ def generate_random_forest(
 
         # Optional: save first 10 tree visualizations
         if save_tree and m < 10:
-            import matplotlib.pyplot as plt
             G = nx.hypercube_graph(num_qubits)
             G = nx.convert_node_labels_to_integers(G)
             pos = nx.drawing.nx_agraph.graphviz_layout(G, prog="dot")
@@ -627,12 +646,14 @@ def generate_random_forest(
             nx.draw_networkx_edges(spanning, pos, edge_color='tab:gray', width=3)
             node_colors = ['tab:blue' if s == 1 else 'tab:orange' for s in signs]
             nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=400, edgecolors='black')
+            nx.draw_networkx_labels(G, pos, font_color="white")
             plt.axis('off')
             plt.tight_layout()
-            plt.savefig(f"tree_{m}.png", bbox_inches='tight', pad_inches=0, transparent=True, dpi=300)
+            fig_path = base_dir / f"tree_{m}.png"
+            plt.savefig(fig_path, bbox_inches='tight', pad_inches=0, transparent=True, dpi=300)
             plt.close()
 
-        # Stack signs for majority voting
+        # Accumulate for majority voting
         if signs_stack is None:
             signs_stack = signs
         else:
@@ -641,28 +662,40 @@ def generate_random_forest(
     assert signs_stack is not None
     return majority_voting(signs_stack)
 
-
 def get_statevector(
     num_qubits: int,
     num_trees: int,
-    samples: List[np.ndarray]
+    samples: List[np.ndarray],
+    save_tree: bool = True
 ) -> np.ndarray:
     """
     Construct the estimated statevector from measured samples and sign forest.
+    Allows passing save_tree flag to control tree visualization.
 
     Args:
         num_qubits: Cube dimension (log2 of state size).
         num_trees: Number of trees in the random forest.
         samples: List of sample probability arrays.
+        save_tree: If True, save the first 10 forest tree visualizations.
 
     Returns:
         A 1D numpy array of length 2**num_qubits representing the statevector.
     """
+    # Compute amplitudes
     base = samples[0]
     if np.any(base < 0):
+        import warnings
         warnings.warn("Negative sample probabilities found; using absolute values.")
         amplitudes = np.sqrt(np.abs(base))
     else:
         amplitudes = np.sqrt(base)
-    signs = generate_random_forest(num_qubits, num_trees, samples)
+
+    # Generate signs (with optional save_tree)
+    signs = generate_random_forest(
+        num_qubits=num_qubits,
+        num_trees=num_trees,
+        samples=samples,
+        save_tree=save_tree
+    )
+
     return amplitudes * signs

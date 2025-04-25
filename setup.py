@@ -1,4 +1,4 @@
-r"""
+"""
 Install library to site-packages
 """
 
@@ -21,6 +21,7 @@ setuptools.setup(
     ],
     install_requires=[
         'networkx>3.3',
+        'pygraphviz>=1.9',
         'matplotlib>=3.9.1',
         'numpy',
         'scipy',
