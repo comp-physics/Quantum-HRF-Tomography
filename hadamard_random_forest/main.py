@@ -598,7 +598,8 @@ def generate_random_forest(
     num_qubits: int,
     num_trees: int,
     samples: List[np.ndarray],
-    save_tree: bool = True
+    save_tree: bool = True,
+    show_tree: bool = False
 ) -> np.ndarray:
     """
     Build multiple random spanning trees on a hypercube and aggregate signs by majority voting.
@@ -651,6 +652,11 @@ def generate_random_forest(
             plt.tight_layout()
             fig_path = base_dir / f"tree_{m}.png"
             plt.savefig(fig_path, bbox_inches='tight', pad_inches=0, transparent=True, dpi=300)
+
+            if show_tree and m == 0:
+                # this will pop up the first tree in-line (or in a window)
+                plt.show()
+
             plt.close()
 
         # Accumulate for majority voting
@@ -666,7 +672,8 @@ def get_statevector(
     num_qubits: int,
     num_trees: int,
     samples: List[np.ndarray],
-    save_tree: bool = True
+    save_tree: bool = True,
+    show_tree: bool = False 
 ) -> np.ndarray:
     """
     Construct the estimated statevector from measured samples and sign forest.
@@ -695,7 +702,12 @@ def get_statevector(
         num_qubits=num_qubits,
         num_trees=num_trees,
         samples=samples,
-        save_tree=save_tree
+        save_tree=save_tree,
+        show_tree=show_tree
     )
 
-    return amplitudes * signs
+    # Normalization
+    statevector = amplitudes * signs
+    statevector = statevector/np.linalg.norm(statevector)
+
+    return statevector
