@@ -3,10 +3,13 @@ Helper functions for estimating quantum state properties such as entanglement, m
 """
 
 from __future__ import annotations
-from typing import List, Sequence
+from typing import Dict, List, Optional, Tuple, Sequence 
+
 import numpy as np
 from qiskit import QuantumCircuit
+from qiskit.providers import Backend
 from qiskit.circuit.library import StatePreparation, HGate, CSwapGate
+from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 from qiskit.quantum_info import PauliList, Statevector
 
 __all__ = [
@@ -178,23 +181,26 @@ def stabilizer_entropy(
 
 def swap_test(
     state1: np.ndarray | qiskit.QuantumCircuit,
-    state2: np.ndarray | qiskit.QuantumCircuit
-) -> qiskit.QuantumCircuit:
+    state2: np.ndarray | qiskit.QuantumCircuit,
+    backend: Backend,
+    shots: int
+) -> Tuple[List[qiskit.QuantumCircuit],  List[float],  List[float]]:
     """
-    Build a SWAP test circuit to compare two quantum states, specified as statevectors or preparation circuits.
+    Build and run a SWAP test to compare two quantum states, returning the circuit,
+    the estimated overlap from measurement, and the exact overlap.
 
     Args:
-        state1: A statevector (1D numpy array of length 2**n) or a QuantumCircuit preparing the first state on n qubits.
-        state2: A statevector (same number of amplitudes) or a QuantumCircuit preparing the second state on n qubits.
+        state1: A statevector array (length 2**n) or QuantumCircuit preparing the first state.
+        state2: A statevector array (same length) or QuantumCircuit preparing the second state.
+        backend: Qiskit backend (e.g., sampler) to run the SWAP-test circuit with measurements.
+        shots: Number of shots for estimating the overlap.
+        seed: Seed for measurements randomness.
 
     Returns:
-        A QuantumCircuit implementing the SWAP test, with:
-          - Qubit 0 as ancilla.
-          - Qubits 1..n for the first state.
-          - Qubits n+1..2n for the second state.
-          - Hadamard gates on the ancilla before and after controlled-SWAPs.
+        qc: The SWAP-test QuantumCircuit with measurement.
+        overlap_est: Estimated overlap |<ψ1|ψ2>|^2 from measurement data.
+        overlap_exact: Exact overlap computed via statevectors.
     """
-
     # Determine qubit count and build preparation circuits
     if isinstance(state1, np.ndarray):
         num_qubits = int(np.log2(state1.size))
@@ -217,7 +223,7 @@ def swap_test(
         raise TypeError("state2 must be either a numpy statevector or a QuantumCircuit.")
 
     # Build SWAP test circuit: ancilla + two registers
-    qc = QuantumCircuit(2 * num_qubits + 1)
+    qc = QuantumCircuit(2 * num_qubits + 1, 1)
 
     # Prepare state registers
     qc.compose(prep1, list(range(1, 1 + num_qubits)), inplace=True)
@@ -229,5 +235,29 @@ def swap_test(
     for i in range(num_qubits):
         qc.append(CSwapGate(), [0, 1 + i, 1 + num_qubits + i])
     qc.append(HGate(), [0])
+    qc.measure(0, 0) 
 
-    return qc
+    # Run SWAP-test circuit to estimate overlap
+    pm = generate_preset_pass_manager(
+        optimization_level=3,
+        backend=backend,
+        layout_method="default",
+        routing_method="sabre",
+        seed_transpiler=999
+    )
+
+    transpiled = pm.run(qc)
+    counts = backend.run(transpiled, shots=shots).result().get_counts(0)
+    if '1' in counts:
+        b = counts['1']
+    else:
+        b = 0
+    overlap_est = 1 - 2 * (b / shots)
+
+    # Compute exact overlap
+    vec1 = Statevector(state1).data
+    vec2 = Statevector(state2).data
+    inner = np.vdot(vec1, vec2)
+    overlap_exact = float(abs(inner)**2)
+
+    return qc, overlap_est, overlap_exact
