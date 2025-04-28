@@ -10,6 +10,7 @@ from qiskit.circuit.library import StatePreparation, HGate, CSwapGate
 from qiskit.quantum_info import PauliList, Statevector
 
 __all__ = [
+    "random_statevector",
     "partial_transpose",
     "trace_norm",
     "logarithmic_negativity",
@@ -19,7 +20,16 @@ __all__ = [
     "swap_test",
 ]
 
+
+
 ### ============================== Quantum entanglement helper functions ==============================
+
+def random_statevector(num_qubits: int) -> np.ndarray:
+    """Generate a random normalized statevector of length 2**num_qubits."""
+    dim = 2**num_qubits
+    # real and imaginary parts ∼ N(0,1)
+    vec = np.random.randn(dim) + 1j * np.random.randn(dim)
+    return vec / np.linalg.norm(vec)
 
 def partial_transpose(density_op: np.ndarray, num_sysA: int, num_qubits: int) -> np.ndarray:
     r"""

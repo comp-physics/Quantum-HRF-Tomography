@@ -29,6 +29,7 @@ from .main import (
 
 # Utility functions
 from .utils import (
+    random_statevector,
     logarithmic_negativity,
     stabilizer_entropy,
     swap_test
@@ -49,6 +50,7 @@ __all__ = [
     "get_samples_hardware",
     "get_statevector",
     # utilities
+    "random_statevector",
     "logarithmic_negativity",
     "stabilizer_entropy",
     "swap_test"
