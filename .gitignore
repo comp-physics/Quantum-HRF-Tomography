@@ -178,6 +178,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-
-# Ignore everything under tutorial/forest gallery
-/tutorials/forest\ gallery/
