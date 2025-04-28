@@ -432,7 +432,7 @@ def get_samples_noisy(
 
             # If this mapping hasn't been seen, calibrate a new mitigation object.
             if key not in mapping_mit:
-                print("=========== New M3 calibration detected ===========")
+                # print("=========== New M3 calibration detected ===========")
                 mit = M3Mitigation(backend_sim)
                 mit.cals_from_system(mapping)
                 mapping_mit[key] = mit
@@ -554,7 +554,7 @@ def get_samples_hardware(
         mapping = mthree_utils.final_measurement_mapping(circ)
         key = str(mapping)
         if error_mitigation and key not in mapping_mit:
-            print("=========== New M3 calibration detected ===========")
+            # print("=========== New M3 calibration detected ===========")
             mit = mthree.M3Mitigation(device)
             mit.cals_from_system(mapping)
             mapping_mit[key] = mit
@@ -609,11 +609,23 @@ def generate_random_forest(
         num_qubits: Cube dimension (log2 of state size).
         num_trees: Number of random trees to generate.
         samples: List of sample probability arrays used to compute weights.
-        save_tree: If True, save the first 10 tree plots under 'forest gallery/{num_qubits}-qubit/'.
+        save_tree: If True, save the first 5 tree plots under 'forest gallery/{num_qubits}-qubit/'.
 
     Returns:
         A 1D numpy array of length 2**num_qubits containing final +1/-1 signs.
     """
+    MAX_VIS_QUBITS = 10
+    if num_qubits > MAX_VIS_QUBITS:
+        # Disable any tree saving or showing beyond the threshold
+        if save_tree or show_first:
+            logging.warning(
+                "Too large to render the tree graph for num_qubits > %d (got %d).",
+                MAX_VIS_QUBITS, num_qubits
+            )
+        save_tree = False
+        show_first = False
+
+
     signs_stack: Optional[np.ndarray] = None
 
     # Prepare output directory if needed
@@ -637,21 +649,29 @@ def generate_random_forest(
         weights = get_weight(samples, roots, leafs, num_qubits)
         signs = get_signs(weights, pmatrix, paths, idx_cumsum)
 
-        # Optional: save first 10 tree visualizations
-        if save_tree and m < 10:
+        # Optional: save first 5 tree visualizations
+        if save_tree and m < 5:
             G = nx.hypercube_graph(num_qubits)
             G = nx.convert_node_labels_to_integers(G)
             pos = nx.drawing.nx_agraph.graphviz_layout(G, prog="dot")
-            plt.figure(figsize=(6, 6))
+
+            # Dynamically size the figure
+            base_size = 6
+            extra = max(0, num_qubits - 5)
+            width_factor  = 2 ** extra
+            height_factor = 1.5 ** extra
+            plt.figure(figsize=(base_size * width_factor, base_size * height_factor))
+
             nx.draw_networkx_edges(G, pos, edge_color='tab:gray', alpha=0.2, width=2)
             nx.draw_networkx_edges(spanning, pos, edge_color='tab:gray', width=3)
             node_colors = ['tab:blue' if s == 1 else 'tab:orange' for s in signs]
             nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=400, edgecolors='black')
             nx.draw_networkx_labels(G, pos, font_color="white")
+
             plt.axis('off')
             plt.tight_layout()
             fig_path = base_dir / f"tree_{m}.png"
-            plt.savefig(fig_path, bbox_inches='tight', pad_inches=0, transparent=True, dpi=300)
+            plt.savefig(fig_path, bbox_inches='tight', pad_inches=0, transparent=True, dpi=200)
 
             if show_tree and m == 0:
                 # this will pop up the first tree in-line (or in a window)
