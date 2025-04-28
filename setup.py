@@ -10,8 +10,6 @@ import setuptools
 setuptools.setup(
     name='hadamard-random-forest',
     version='0.1.0',
-    author='Zhixin (Jack) Song',
-    author_email='zsong300@gatech.edu',
     description='Hadamard Random Forest: real-valued quantum state reconstruction',
     # long_description=long_description,
     # long_description_content_type="text/markdown",
