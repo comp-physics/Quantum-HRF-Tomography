@@ -24,6 +24,21 @@ cd Quantum-HRF-Tomography
 pip install -e .
 ```
 
+To visualize the tree structure, one need to install `Graphviz` to enforce the graph layout. For macOS,
+
+```bash
+brew install graphviz
+pip install pygraphviz
+```
+
+Please refer to [here](https://www.graphviz.org/download/) for more instructions. Then one can use 
+
+```python
+import hadamard_random_forest as hrf
+hrf.get_statevector(num_qubits, num_trees, samples, save_tree=True, show_tree=True)
+```
+
+
 ### Citation
 
 
