@@ -1,5 +1,0 @@
-qiskit
-numpy
-scipy
-networkx
-matplotlib
