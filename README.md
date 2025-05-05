@@ -1,4 +1,4 @@
-## Quantum-HRF-Tomography
+## Quantum HRF Tomography
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
 <a href="https://github.com/comp-physics/Quantum-HRF-Tomography/actions">
