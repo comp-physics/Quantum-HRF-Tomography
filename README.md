@@ -3,7 +3,7 @@
 
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
-[![CI](https://github.com/comp-physics/Quantum-HRF-Tomography/workflows/test/badge.svg)](https://github.com/comp-physics/Quantum-HRF-Tomography/actions)
+[![CI](https://github.com/comp-physics/Quantum-HRF-Tomography/workflows/ci/badge.svg)](https://github.com/comp-physics/Quantum-HRF-Tomography/actions)
 
 Efficient and Robust Reconstruction of Real-Valued Quantum States using Hadamard Random Forests
 
