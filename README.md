@@ -1,18 +1,23 @@
-## Efficient and robust reconstruction of real-valued quantum states
+## Quantum-HRF-Tomography
+
+Efficient and Robust Reconstruction of Real-Valued Quantum States using Hadamard Random Forests
+
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
+
+### Summary
+
+⚡ **Fast**: Reduces required quantum circuits from exponential to linear in number of qubits  
+🎯 **Accurate**: Achieves 89% fidelity on 10-qubit real states using IBM hardware  
+🧠 **Smart**: Uses random forest over hypercube graphs for efficient sign reconstruction  
 
 ### Introduction
 
 This is the code that accompanies the following paper:
 
-
-
 <div align="center">
 <img src="https://github.com/comp-physics/Quantum-HRF-Tomography/blob/master/assets/overview.png" height="300px"> 
 </div>
-
-
 
 ### Install 
 
