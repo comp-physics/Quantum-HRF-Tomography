@@ -1,11 +1,12 @@
 ## Quantum HRF Tomography
+<img src="assets/logo-qht.png" alt="HRF Banner" width="300"/>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
 <a href="https://github.com/comp-physics/Quantum-HRF-Tomography/actions">
 <img src="https://github.com/comp-physics/Quantum-HRF-Tomography/actions/workflows/ci.yml/badge.svg" />
 </a>
 
-Efficient and Robust Reconstruction of Real-Valued Quantum States using Hadamard Random Forests
+Efficient and Robust Reconstruction of Real-Valued Quantum States using **Hadamard Random Forests**
 
 ### Summary
 
