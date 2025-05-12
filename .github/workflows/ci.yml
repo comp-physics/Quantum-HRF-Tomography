@@ -17,9 +17,6 @@ jobs:
       - name: Test 
         run: coverage run -m pytest tests
 
-      - name: Combine all coverage results
-        run: coverage combine
-
       - name: Generate coverage report
         run: coverage report
 
