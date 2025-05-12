@@ -25,7 +25,6 @@ setuptools.setup(
         'scipy',
         'dill',
         'tqdm',
-        'pygraphviz',
         'treelib>=1.7.0',
         'qiskit>=1.3.0',
         'qiskit-aer>=0.14.2',
