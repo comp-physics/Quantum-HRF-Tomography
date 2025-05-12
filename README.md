@@ -5,6 +5,7 @@
 <a href="https://github.com/comp-physics/Quantum-HRF-Tomography/actions">
 <img src="https://github.com/comp-physics/Quantum-HRF-Tomography/actions/workflows/ci.yml/badge.svg" />
 </a>
+[![Coverage Status](https://coveralls.io/repos/github/comp-physics/Quantum-HRF-Tomography/badge.svg)](https://coveralls.io/github/comp-physics/Quantum-HRF-Tomography)
 
 Efficient and Robust Reconstruction of Real-Valued Quantum States using **Hadamard Random Forests**
 
