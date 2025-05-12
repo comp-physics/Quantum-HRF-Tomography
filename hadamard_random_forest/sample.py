@@ -71,7 +71,7 @@ def get_samples(
     elif isinstance(sampler, Sampler):
         results = sampler.run([(qc, parameters) for qc in circuits]).result()[0].data.meas.get_counts()
     else:
-        raise ValueError("Sampler must be of type qiskit_aer.primitives.Sampler or qiskit_ibm_runtime.SamplerV2")
+        raise ValueError("Sampler must be of type qiskit_aer.primitives.Sampler or qiskit_ibm_runtime.SamplerV2.")
     
     samples: List[np.ndarray] = []
     for res in results:
