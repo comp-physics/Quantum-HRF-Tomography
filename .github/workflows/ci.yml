@@ -13,7 +13,7 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: |
-          pip install -e .
+          pip install .[dev]
       - name: Test 
         run: coverage run -m pytest tests
 
