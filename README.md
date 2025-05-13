@@ -17,7 +17,7 @@ Efficient and Robust Reconstruction of Real-Valued Quantum States using **Hadama
 
 ### Introduction
 
-This is the code that accompanies the following paper:
+This is the code that accompanies the following paper: [arxiv.org/abs/2505.06455](https://arxiv.org/abs/2505.06455)
 
 <div align="center">
 <img src="https://github.com/comp-physics/Quantum-HRF-Tomography/blob/master/assets/overview.png" height="300px"> 
@@ -25,7 +25,7 @@ This is the code that accompanies the following paper:
 
 ### Install 
 
-We recommend download all the files and finish the installation locally,
+We recommend downloading all the files and finishing the installation locally,
 
 ```bash
 git clone https://github.com/comp-physics/Quantum-HRF-Tomography
@@ -47,9 +47,16 @@ import hadamard_random_forest as hrf
 hrf.get_statevector(num_qubits, num_trees, samples, save_tree=True, show_tree=True)
 ```
 
-
 ### Citation
 
+```bibtex
+@journal{
+  author = {Zhixin Song and Hang Ren and Melody Lee and Bryan Gard and Nicolas Renaud and Spencer H. Bryngelson},
+  title = {Reconstructing Real-Valued Quantum States},
+  journal = {arXiv preprint arXiv:2505.06455},
+  year = {2025},
+}
+```
 
 
 ### License
