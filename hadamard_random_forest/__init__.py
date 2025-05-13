@@ -14,11 +14,14 @@ __version__ = "0.1.0"
 __license__ = "MIT"
 
 # Core functionality from main module
-from .main import (
+from .random_forest import (
     fix_random_seed,
     optimized_uniform_spanning_tree,
     generate_hypercube_tree,
-    generate_random_forest,
+    generate_random_forest
+)
+
+from .sample import (
     get_circuits,
     get_circuits_hardware,
     get_samples,

@@ -23,6 +23,7 @@ setuptools.setup(
         'pandas>=2.2.2',
         'numpy',
         'scipy',
+        'dill',
         'tqdm',
         'treelib>=1.7.0',
         'qiskit>=1.3.0',
@@ -31,6 +32,11 @@ setuptools.setup(
         'qiskit-experiments>=0.10.0',
         'mthree==3.0.0',
     ],
+    extras_require={
+        'dev': [
+            'pytest','pytest-runner', 'coverage', 'coveralls'
+        ],
+    },
     python_requires='>=3.8, <4',
     classifiers=[
         'Programming Language :: Python :: 3',

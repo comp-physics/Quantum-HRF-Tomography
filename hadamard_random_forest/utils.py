@@ -3,7 +3,7 @@ Helper functions for estimating quantum state properties such as entanglement, m
 """
 
 from __future__ import annotations
-from typing import Dict, List, Optional, Tuple, Sequence 
+from typing import  List, Tuple, Sequence 
 
 import numpy as np
 from qiskit import QuantumCircuit
@@ -180,11 +180,11 @@ def stabilizer_entropy(
 ### ============================== Quantum state overlap helper functions ==============================
 
 def swap_test(
-    state1: np.ndarray | qiskit.QuantumCircuit,
-    state2: np.ndarray | qiskit.QuantumCircuit,
+    state1: np.ndarray | QuantumCircuit,
+    state2: np.ndarray | QuantumCircuit,
     backend: Backend,
     shots: int
-) -> Tuple[List[qiskit.QuantumCircuit],  List[float],  List[float]]:
+) -> Tuple[List[QuantumCircuit],  List[float],  List[float]]:
     """
     Build and run a SWAP test to compare two quantum states, returning the circuit,
     the estimated overlap from measurement, and the exact overlap.
