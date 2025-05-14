@@ -50,7 +50,7 @@ hrf.get_statevector(num_qubits, num_trees, samples, save_tree=True, show_tree=Tr
 ### Citation
 
 ```bibtex
-@journal{
+@article{
   author = {Zhixin Song and Hang Ren and Melody Lee and Bryan Gard and Nicolas Renaud and Spencer H. Bryngelson},
   title = {Reconstructing Real-Valued Quantum States},
   journal = {arXiv preprint arXiv:2505.06455},
