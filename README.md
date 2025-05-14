@@ -25,7 +25,7 @@ This is the code that accompanies the following paper: [arxiv.org/abs/2505.06455
 
 ### Install 
 
-We recommend downloading all the files and finishing the installation locally,
+We recommend cloning the repo. and installing locally:
 
 ```bash
 git clone https://github.com/comp-physics/Quantum-HRF-Tomography
@@ -33,7 +33,7 @@ cd Quantum-HRF-Tomography
 pip install -e .
 ```
 
-To visualize the tree structure, one need to install `Graphviz` to enforce the graph layout. For macOS,
+To visualize the tree structure, one needs to install `Graphviz` to enforce the graph layout. For macOS,
 
 ```bash
 brew install graphviz
