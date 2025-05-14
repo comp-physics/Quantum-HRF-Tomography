@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata below."
-title: Quantum HRF Tomograph
+title: Quantum HRF Tomography
 version: 1.0.0
 doi: 10.48550/arXiv.2505.06455
 date-released: 2025-05-09
@@ -26,7 +26,7 @@ preferred-citation:
   title: Reconstructing Real-Valued Quantum States
   doi: 10.48550/arXiv.2505.06455
   url: https://arxiv.org/abs/2505.06455
-  journal: arXiv preprint
+  journal: arXiv preprint arXiv:2505.06455
   year: 2025
   authors:
     - family-names: Song
