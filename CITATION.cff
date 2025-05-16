@@ -1,10 +1,6 @@
 cff-version: 1.2.0
-message: "If you use this work, please cite it using the metadata below."
-type: article
-title: Reconstructing Real-Valued Quantum States
-doi: 10.48550/arXiv.2505.06455
-journal: arXiv preprint arXiv:2505.06455
-year: 2025
+message: "If you use this work, please cite it using the metadata from this file."
+title: "Reconstructing Real-Valued Quantum States"
 authors:
   - family-names: Song
     given-names: Zhixin
@@ -18,3 +14,9 @@ authors:
     given-names: Nicolas
   - family-names: Bryngelson
     given-names: Spencer H.
+date-released: "2025-05-09"
+identifiers:
+  - type: arxiv
+    value: 2505.06455
+    description: arXiv identifier for this preprint
+type: article
