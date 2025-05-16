@@ -34,7 +34,7 @@ cd Quantum-HRF-Tomography
 python -m venv qenv
 source qenv/bin/activate
 pip install -e .
-pip install jupyter-notebook
+pip install jupyter
 ```
 
 To visualize the tree structure, one needs to install `Graphviz` to enforce the graph layout. For macOS,
