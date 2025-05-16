@@ -1,13 +1,10 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it using the metadata below."
-title: Quantum HRF Tomography
-version: 1.0.0
+message: "If you use this work, please cite it using the metadata below."
+type: article
+title: Reconstructing Real-Valued Quantum States
 doi: 10.48550/arXiv.2505.06455
-date-released: 2025-05-09
-type: software
-license: MIT
-url: https://github.com/comp-physics/Quantum-HRF-Tomography
-repository-code: https://github.com/comp-physics/Quantum-HRF-Tomography
+journal: arXiv preprint arXiv:2505.06455
+year: 2025
 authors:
   - family-names: Song
     given-names: Zhixin
@@ -21,23 +18,3 @@ authors:
     given-names: Nicolas
   - family-names: Bryngelson
     given-names: Spencer H.
-preferred-citation:
-  type: article
-  title: Reconstructing Real-Valued Quantum States
-  doi: 10.48550/arXiv.2505.06455
-  url: https://arxiv.org/abs/2505.06455
-  journal: arXiv preprint arXiv:2505.06455
-  year: 2025
-  authors:
-    - family-names: Song
-      given-names: Zhixin
-    - family-names: Ren
-      given-names: Hang
-    - family-names: Lee
-      given-names: Melody
-    - family-names: Gard
-      given-names: Bryan
-    - family-names: Renaud
-      given-names: Nicolas
-    - family-names: Bryngelson
-      given-names: Spencer H.
