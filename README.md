@@ -31,7 +31,10 @@ We recommend cloning the repo. and installing locally:
 ```bash
 git clone https://github.com/comp-physics/Quantum-HRF-Tomography
 cd Quantum-HRF-Tomography
+python -m venv qenv
+source qenv/bin/activate
 pip install -e .
+pip install jupyter-notebook
 ```
 
 To visualize the tree structure, one needs to install `Graphviz` to enforce the graph layout. For macOS,
