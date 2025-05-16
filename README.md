@@ -38,7 +38,10 @@ To visualize the tree structure, one needs to install `Graphviz` to enforce the 
 
 ```bash
 brew install graphviz
-pip install pygraphviz
+pip install --global-option=build_ext \
+            --global-option="-I$(brew --prefix graphviz)/include" \
+            --global-option="-L$(brew --prefix graphviz)/lib" \
+            pygraphviz
 ```
 
 Please refer to [here](https://www.graphviz.org/download/) for more instructions. Then one can use 
