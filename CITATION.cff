@@ -17,6 +17,5 @@ authors:
 date-released: "2025-05-09"
 identifiers:
   - type: arxiv
-    value: 2505.06455
-    description: arXiv identifier for this preprint
+    value: "2505.06455"
 type: article
