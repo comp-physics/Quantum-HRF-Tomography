@@ -355,33 +355,35 @@ def generate_random_forest(
 
         # Optional: save first 5 tree visualizations
         if save_tree and m < 5:
-            G = nx.hypercube_graph(num_qubits)
-            G = nx.convert_node_labels_to_integers(G)
-            pos = nx.drawing.nx_agraph.graphviz_layout(G, prog="dot")
+            try:
+                G = nx.hypercube_graph(num_qubits)
+                G = nx.convert_node_labels_to_integers(G)
+                pos = nx.drawing.nx_agraph.graphviz_layout(G, prog="dot")
 
-            # Dynamically size the figure
-            base_size = 6
-            extra = max(0, num_qubits - 5)
-            width_factor  = 2 ** extra
-            height_factor = 1.5 ** extra
-            plt.figure(figsize=(base_size * width_factor, base_size * height_factor))
+                # Dynamically size the figure
+                base_size = 6
+                extra = max(0, num_qubits - 5)
+                width_factor  = 2 ** extra
+                height_factor = 1.5 ** extra
+                plt.figure(figsize=(base_size * width_factor, base_size * height_factor))
 
-            nx.draw_networkx_edges(G, pos, edge_color='tab:gray', alpha=0.2, width=2)
-            nx.draw_networkx_edges(spanning, pos, edge_color='tab:gray', width=3)
-            node_colors = ['tab:blue' if s == 1 else 'tab:orange' for s in signs]
-            nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=400, edgecolors='black')
-            nx.draw_networkx_labels(G, pos, font_color="white")
+                nx.draw_networkx_edges(G, pos, edge_color='tab:gray', alpha=0.2, width=2)
+                nx.draw_networkx_edges(spanning, pos, edge_color='tab:gray', width=3)
+                node_colors = ['tab:blue' if s == 1 else 'tab:orange' for s in signs]
+                nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=400, edgecolors='black')
+                nx.draw_networkx_labels(G, pos, font_color="white")
 
-            plt.axis('off')
-            plt.tight_layout()
-            fig_path = base_dir / f"tree_{m}.png"
-            plt.savefig(fig_path, bbox_inches='tight', pad_inches=0, transparent=True, dpi=200)
+                plt.axis('off')
+                plt.tight_layout()
+                fig_path = base_dir / f"tree_{m}.png"
+                plt.savefig(fig_path, bbox_inches='tight', pad_inches=0, transparent=True, dpi=200)
 
-            if show_tree and m == 0:
-                # this will pop up the first tree in-line (or in a window)
-                plt.show()
-
-            plt.close()
+                if show_tree and m == 0:
+                    # this will pop up the first tree in-line (or in a window)
+                    plt.show()
+            finally:
+                # Always close the figure to prevent memory leaks
+                plt.close()
 
         # Accumulate for majority voting
         if signs_stack is None:
