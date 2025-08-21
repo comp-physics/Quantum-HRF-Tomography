@@ -1,5 +1,6 @@
 import unittest
 import random
+import warnings
 import numpy as np
 import networkx as nx
 import treelib
@@ -270,7 +271,13 @@ class TestRandomForest(unittest.TestCase):
         
         # Test tie scenarios (should default to +1)
         votes = np.array([[1, -1], [-1, 1]])
-        result = majority_voting(votes)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = majority_voting(votes)
+            # Check that a warning was issued
+            self.assertEqual(len(w), 1)
+            self.assertTrue(issubclass(w[0].category, UserWarning))
+            self.assertIn("Zero elements encountered", str(w[0].message))
         expected = np.array([1, 1])  # Ties resolved to +1
         np.testing.assert_array_equal(result, expected)
         
@@ -346,7 +353,10 @@ class TestRandomForest(unittest.TestCase):
         samples = [np.random.rand(2**num_qubits) for _ in range(num_qubits+1)]
         
         # This should work without trying to create visualizations
-        result = generate_random_forest(num_qubits, num_trees, samples, save_tree=True)
+        # May generate warnings from majority voting due to random data
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            result = generate_random_forest(num_qubits, num_trees, samples, save_tree=True)
         
         self.assertEqual(result.shape, (2**num_qubits,))
         self.assertTrue(np.all(np.isin(result, [-1, 1])))
