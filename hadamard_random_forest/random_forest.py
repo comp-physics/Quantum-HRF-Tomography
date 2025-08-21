@@ -54,7 +54,7 @@ def pascal_layer(n: int, k: int) -> int:
     Returns:
         The binomial coefficient C(n, k).
     """
-    return comb(n, k, exact=True)
+    return comb(n, k)
 
 
 def optimized_uniform_spanning_tree(G: nx.Graph, dimension: int) -> nx.Graph:
@@ -392,5 +392,8 @@ def generate_random_forest(
             signs_stack = np.vstack([signs_stack, signs])
 
     assert signs_stack is not None
+    # Ensure signs_stack is 2D for majority_voting
+    if signs_stack.ndim == 1:
+        signs_stack = signs_stack.reshape(1, -1)
     return majority_voting(signs_stack)
 
