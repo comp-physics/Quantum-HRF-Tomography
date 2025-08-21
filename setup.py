@@ -18,7 +18,7 @@ setuptools.setup(
         'hadamard_random_forest',
     ],
     install_requires=[
-        'networkx>3.3',
+        'networkx>=3.3',
         'matplotlib>=3.9.1',
         'pylatexenc>=2.10',
         'pandas>=2.2.2',

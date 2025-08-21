@@ -1,7 +1,4 @@
 # Byte-compiled / optimized / DLL files
-*.py[cod]
-*$py.class
-# Byte-compiled / optimized / DLL files
 .idea
 .DS_Store
 .vscode/
