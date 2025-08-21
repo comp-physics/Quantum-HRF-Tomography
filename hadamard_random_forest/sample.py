@@ -14,7 +14,6 @@ import mthree
 from qiskit.providers import Backend
 from qiskit.transpiler import generate_preset_pass_manager
 from qiskit_ibm_runtime import SamplerV2 as Sampler
-from qiskit_aer.primitives import Sampler as Aer_Sampler
 from mthree import M3Mitigation
 import mthree.utils as mthree_utils
 
@@ -46,40 +45,6 @@ def get_circuits(
         circuits.append(qc.measure_all(inplace=False))
     return circuits
 
-
-def get_samples(
-    num_qubits: int,
-    sampler: Aer_Sampler | Sampler,
-    circuits: List[qiskit.QuantumCircuit],
-    parameters: np.ndarray
-) -> List[np.ndarray]:
-    """
-    Execute circuits and collect probability distributions using a noiseless sampler.
-
-    Args:
-        num_qubits: Number of qubits (defines statevector size 2**num_qubits).
-        sampler: Sampler object providing run().result().quasi_dists.
-        circuits: List of QuantumCircuit to execute.
-        parameters: 1D array of parameter values to bind to each circuit.
-
-    Returns:
-        List of 1D numpy arrays of length 2**num_qubits representing probabilities.
-    """
-    n = len(circuits)
-    if isinstance(sampler, Aer_Sampler):
-        results = sampler.run(circuits, [parameters] * n).result().quasi_dists
-    elif isinstance(sampler, Sampler):
-        results = sampler.run([(qc, parameters) for qc in circuits]).result()[0].data.meas.get_counts()
-    else:
-        raise ValueError("Sampler must be of type qiskit_aer.primitives.Sampler or qiskit_ibm_runtime.SamplerV2.")
-    
-    samples: List[np.ndarray] = []
-    for res in results:
-        proba = np.zeros(2**num_qubits, dtype=float)
-        for idx, val in res.items():
-            proba[idx] = val
-        samples.append(proba)
-    return samples
 
 
 def get_samples_noisy(

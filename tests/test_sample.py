@@ -1,12 +1,12 @@
 import unittest
 import numpy as np
 from qiskit.circuit.random import random_circuit
-from qiskit_aer.primitives import Sampler as Aer_Sampler
+from qiskit_aer import AerSimulator
 from qiskit.circuit.library import real_amplitudes
 from hadamard_random_forest.sample import (
     get_statevector,
     get_circuits,
-    get_samples
+    get_samples_noisy
 )
 
 class TestSample(unittest.TestCase):
@@ -26,25 +26,6 @@ class TestSample(unittest.TestCase):
             self.assertEqual(circuit.num_qubits, num_qubits)
             self.assertIsNotNone(circuit)
 
-    def test_get_samples(self):
-        """Test the get_samples function."""
-        num_qubits = 3
-        sampler = Aer_Sampler()
-        base_circuit = real_amplitudes(num_qubits)
-        circuits = get_circuits(num_qubits, base_circuit)
-        parameters = np.random.rand(base_circuit.num_parameters)
-        samples = get_samples(num_qubits, sampler, circuits, parameters)
-        
-        # Original tests
-        self.assertIsInstance(samples, list)
-        self.assertEqual(len(samples), 4)
-        
-        # Enhanced tests
-        for sample in samples:
-            self.assertIsInstance(sample, np.ndarray)
-            self.assertEqual(sample.shape, (8,))  # 2^3 = 8
-            self.assertTrue(np.all(sample >= 0))  # Non-negative probabilities
-            self.assertAlmostEqual(np.sum(sample), 1.0, places=10)  # Normalized
 
     def test_get_statevector(self):
         """Test the get_statevector function."""
@@ -69,13 +50,14 @@ class TestSample(unittest.TestCase):
         """Test the complete workflow integration."""
         num_qubits = 2  # Smaller for faster testing
         num_trees = 3
-        sampler = Aer_Sampler()
+        backend_sim = AerSimulator()
         base_circuit = real_amplitudes(num_qubits)
         parameters = np.random.rand(base_circuit.num_parameters)
+        shots = 1024
         
         # Complete workflow
         circuits = get_circuits(num_qubits, base_circuit)
-        samples = get_samples(num_qubits, sampler, circuits, parameters)
+        samples = get_samples_noisy(num_qubits, circuits, shots, parameters, backend_sim, error_mitigation=False)
         statevector = get_statevector(num_qubits, num_trees, samples, save_tree=False)
         
         # Validate end-to-end

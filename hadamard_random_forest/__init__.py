@@ -24,7 +24,6 @@ from .random_forest import (
 from .sample import (
     get_circuits,
     get_circuits_hardware,
-    get_samples,
     get_samples_noisy,
     get_samples_hardware,
     get_statevector
@@ -48,7 +47,6 @@ __all__ = [
     "generate_random_forest",
     "get_circuits",
     "get_circuits_hardware",
-    "get_samples",
     "get_samples_noisy",
     "get_samples_hardware",
     "get_statevector",
