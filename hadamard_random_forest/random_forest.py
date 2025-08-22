@@ -13,6 +13,7 @@ from typing import List, Optional, Tuple, Dict, Any
 import multiprocessing as mp
 import functools
 import atexit
+from collections import OrderedDict
 
 import numpy as np
 import networkx as nx
@@ -21,16 +22,73 @@ from math import comb
 from scipy.sparse import coo_matrix
 import matplotlib.pyplot as plt
 
-# Global cache for hypercube graphs to avoid recreation
-_HYPERCUBE_CACHE: Dict[int, nx.Graph] = {}
+
+class LRUCache:
+    """Least Recently Used cache with size limit."""
+    
+    def __init__(self, max_size: int):
+        self.cache = OrderedDict()
+        self.max_size = max_size
+        self.hits = 0
+        self.misses = 0
+    
+    def get(self, key):
+        """Get item from cache, updating access order."""
+        if key in self.cache:
+            self.hits += 1
+            # Move to end (most recently used)
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        self.misses += 1
+        return None
+    
+    def set(self, key, value):
+        """Set item in cache, evicting LRU if needed."""
+        if key in self.cache:
+            # Update and move to end
+            self.cache.move_to_end(key)
+        self.cache[key] = value
+        # Evict least recently used if over limit
+        if len(self.cache) > self.max_size:
+            evicted = self.cache.popitem(last=False)
+            logging.debug(f"Evicted cache entry: {evicted[0]}")
+    
+    def clear(self):
+        """Clear cache and reset statistics."""
+        self.cache.clear()
+        self.hits = 0
+        self.misses = 0
+    
+    def __contains__(self, key):
+        return key in self.cache
+    
+    def __len__(self):
+        return len(self.cache)
+    
+    def info(self):
+        """Get cache statistics."""
+        return {
+            'size': len(self.cache),
+            'max_size': self.max_size,
+            'hits': self.hits,
+            'misses': self.misses,
+            'hit_rate': self.hits / (self.hits + self.misses) if (self.hits + self.misses) > 0 else 0
+        }
+
+
+# Cache size limits based on memory footprint
+MAX_HYPERCUBE_CACHE_SIZE = 16    # Large graphs (increased from 10)
+MAX_POWER2_CACHE_SIZE = 100      # Small lists  
+MAX_HAMMING_CACHE_SIZE = 20      # Medium dictionaries
+
+# Global LRU caches with size limits
+_HYPERCUBE_CACHE = LRUCache(MAX_HYPERCUBE_CACHE_SIZE)
+_POWER2_NODES_CACHE = LRUCache(MAX_POWER2_CACHE_SIZE)
+_HAMMING_LAYERS_CACHE = LRUCache(MAX_HAMMING_CACHE_SIZE)
 
 # Global persistent worker pool
 _GLOBAL_POOL: Optional[mp.Pool] = None
 _POOL_SIZE: Optional[int] = None
-
-# Cache for pre-computed values
-_POWER2_NODES_CACHE: Dict[int, List[int]] = {}
-_HAMMING_LAYERS_CACHE: Dict[int, Dict[int, List[int]]] = {}
 
 
 def fix_random_seed(seed: int) -> None:
@@ -112,6 +170,7 @@ def cleanup_pool() -> None:
 def get_cached_hypercube(dimension: int) -> nx.Graph:
     """
     Get a cached hypercube graph or create and cache a new one.
+    Uses LRU eviction when cache is full.
     
     Args:
         dimension: Dimension of the hypercube.
@@ -121,17 +180,22 @@ def get_cached_hypercube(dimension: int) -> nx.Graph:
     """
     global _HYPERCUBE_CACHE
     
-    if dimension not in _HYPERCUBE_CACHE:
-        G = nx.hypercube_graph(dimension)
-        G = nx.convert_node_labels_to_integers(G)
-        _HYPERCUBE_CACHE[dimension] = G
+    cached = _HYPERCUBE_CACHE.get(dimension)
+    if cached is not None:
+        return cached
     
-    return _HYPERCUBE_CACHE[dimension]
+    # Create new graph
+    G = nx.hypercube_graph(dimension)
+    G = nx.convert_node_labels_to_integers(G)
+    _HYPERCUBE_CACHE.set(dimension, G)
+    
+    return G
 
 
 def get_cached_power2_nodes(dimension: int) -> List[int]:
     """
     Get cached power-of-2 nodes for a given dimension.
+    Uses LRU eviction when cache is full.
     
     Args:
         dimension: Number of qubits.
@@ -141,19 +205,25 @@ def get_cached_power2_nodes(dimension: int) -> List[int]:
     """
     global _POWER2_NODES_CACHE
     
-    if dimension not in _POWER2_NODES_CACHE:
-        N = 2**dimension
-        _POWER2_NODES_CACHE[dimension] = [
-            node for node in range(N) 
-            if node > 0 and (node & (node - 1)) == 0
-        ]
+    cached = _POWER2_NODES_CACHE.get(dimension)
+    if cached is not None:
+        return cached
     
-    return _POWER2_NODES_CACHE[dimension]
+    # Calculate power-of-2 nodes
+    N = 2**dimension
+    nodes = [
+        node for node in range(N) 
+        if node > 0 and (node & (node - 1)) == 0
+    ]
+    _POWER2_NODES_CACHE.set(dimension, nodes)
+    
+    return nodes
 
 
 def get_cached_hamming_layers(dimension: int) -> Dict[int, List[int]]:
     """
     Get cached Hamming weight layers for a given dimension.
+    Uses LRU eviction when cache is full.
     
     Args:
         dimension: Number of qubits.
@@ -163,14 +233,84 @@ def get_cached_hamming_layers(dimension: int) -> Dict[int, List[int]]:
     """
     global _HAMMING_LAYERS_CACHE
     
-    if dimension not in _HAMMING_LAYERS_CACHE:
-        N = 2**dimension
-        layers = {}
-        for k in range(dimension + 1):
-            layers[k] = [node for node in range(N) if hamming_weight(node) == k]
-        _HAMMING_LAYERS_CACHE[dimension] = layers
+    cached = _HAMMING_LAYERS_CACHE.get(dimension)
+    if cached is not None:
+        return cached
     
-    return _HAMMING_LAYERS_CACHE[dimension]
+    # Calculate Hamming layers
+    N = 2**dimension
+    layers = {}
+    for k in range(dimension + 1):
+        layers[k] = [node for node in range(N) if hamming_weight(node) == k]
+    _HAMMING_LAYERS_CACHE.set(dimension, layers)
+    
+    return layers
+
+
+def clear_caches() -> None:
+    """Clear all global caches to free memory."""
+    global _HYPERCUBE_CACHE, _POWER2_NODES_CACHE, _HAMMING_LAYERS_CACHE
+    
+    _HYPERCUBE_CACHE.clear()
+    _POWER2_NODES_CACHE.clear()
+    _HAMMING_LAYERS_CACHE.clear()
+    
+    logging.info("All caches cleared")
+
+
+def get_cache_info() -> Dict[str, Dict]:
+    """
+    Get information about all caches.
+    
+    Returns:
+        Dictionary with cache statistics for each cache.
+    """
+    return {
+        'hypercube': _HYPERCUBE_CACHE.info(),
+        'power2_nodes': _POWER2_NODES_CACHE.info(),
+        'hamming_layers': _HAMMING_LAYERS_CACHE.info()
+    }
+
+
+def set_cache_sizes(
+    hypercube: Optional[int] = None,
+    power2: Optional[int] = None,
+    hamming: Optional[int] = None
+) -> None:
+    """
+    Adjust cache size limits. Clears excess entries if sizes are reduced.
+    
+    Args:
+        hypercube: New size limit for hypercube cache
+        power2: New size limit for power2 nodes cache
+        hamming: New size limit for Hamming layers cache
+    """
+    global _HYPERCUBE_CACHE, _POWER2_NODES_CACHE, _HAMMING_LAYERS_CACHE
+    
+    if hypercube is not None:
+        old_size = _HYPERCUBE_CACHE.max_size
+        _HYPERCUBE_CACHE.max_size = hypercube
+        if hypercube < old_size:
+            # Evict excess entries
+            while len(_HYPERCUBE_CACHE) > hypercube:
+                _HYPERCUBE_CACHE.cache.popitem(last=False)
+                logging.debug(f"Reduced hypercube cache size to {hypercube}")
+    
+    if power2 is not None:
+        old_size = _POWER2_NODES_CACHE.max_size
+        _POWER2_NODES_CACHE.max_size = power2
+        if power2 < old_size:
+            while len(_POWER2_NODES_CACHE) > power2:
+                _POWER2_NODES_CACHE.cache.popitem(last=False)
+                logging.debug(f"Reduced power2 cache size to {power2}")
+    
+    if hamming is not None:
+        old_size = _HAMMING_LAYERS_CACHE.max_size
+        _HAMMING_LAYERS_CACHE.max_size = hamming
+        if hamming < old_size:
+            while len(_HAMMING_LAYERS_CACHE) > hamming:
+                _HAMMING_LAYERS_CACHE.cache.popitem(last=False)
+                logging.debug(f"Reduced hamming cache size to {hamming}")
 
 
 def optimized_uniform_spanning_tree(G: nx.Graph, dimension: int) -> nx.Graph:
@@ -628,6 +768,7 @@ def generate_random_forest(
 
             # Optional: save first 5 tree visualizations
             if save_tree and m < 5:
+                # Initialize current_fig before try block to ensure cleanup in all cases
                 current_fig = None
                 try:
                     G = nx.hypercube_graph(num_qubits)
@@ -655,10 +796,16 @@ def generate_random_forest(
                     if show_tree and m == 0:
                         # this will pop up the first tree in-line (or in a window)
                         plt.show()
+                except Exception as e:
+                    # Log the error for debugging but don't stop the process
+                    logging.warning(f"Failed to visualize tree {m}: {e}")
                 finally:
-                    # Always close the figure to prevent memory leaks, but only if it was created
+                    # Always close the figure to prevent memory leaks
+                    # This also closes any figures created by plt functions even if current_fig wasn't assigned
                     if current_fig is not None:
                         plt.close(current_fig)
+                    # Extra safety: close all figures to prevent any potential leaks
+                    plt.close('all')
 
             # Store signs for this tree in pre-allocated array
             signs_stack[m] = signs

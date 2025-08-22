@@ -12,16 +12,23 @@ Test Module Structure
 The test suite is organized into three main modules, each testing different components
 of the HRF library:
 
-1. test_random_forest.py (40 tests)
-   - Tests core graph theory algorithms for hypercube spanning trees
-   - Validates uniform random tree generation using optimized algorithms
-   - Tests majority voting and sign reconstruction mechanisms
-   - Covers path finding and weight calculation functions
-   - Ensures reproducibility through random seed management
-   - NEW: Tests parallel processing features and multiprocessing functionality
-   - NEW: Validates mathematical correctness against tutorial equations
-   - NEW: Comprehensive edge case testing and boundary conditions
-   - NEW: Integration testing following tutorial notebook workflow
+1. test_random_forest.py (52 tests across 7 test classes)
+   - TestRandomForest: Core graph algorithms and spanning tree generation
+   - TestParallelProcessing: Multiprocessing and batch tree generation
+   - TestOptimizationFeatures: Caching mechanisms and pool management
+   - TestCacheManagement: LRU cache eviction, statistics, and size management
+   - TestSignDetermination: Mathematical correctness of sign algorithms
+   - TestEdgeCases: Boundary conditions and error handling
+   - TestTutorialWorkflow: Integration tests following tutorial notebooks
+   
+   Key features tested:
+   - Uniform random tree generation using optimized algorithms
+   - Majority voting and sign reconstruction mechanisms
+   - Path finding and weight calculation functions
+   - Reproducibility through random seed management
+   - Parallel processing with configurable worker pools
+   - LRU cache management with size limits and eviction policies
+   - Cache statistics tracking (hits, misses, hit rates)
 
 2. test_sample.py (35 tests)
    - Tests quantum circuit generation for Hadamard measurements
@@ -30,7 +37,7 @@ of the HRF library:
    - Covers statevector reconstruction from measurement data
    - Tests hardware-specific circuit transpilation and optimization
 
-3. test_utils.py (24 tests)
+3. test_utils.py (25 tests)
    - Tests quantum entanglement measures (logarithmic negativity)
    - Validates quantum magic quantification (stabilizer entropy)
    - Tests quantum state overlap calculations (SWAP test)
@@ -42,7 +49,7 @@ Testing Methodology
 
 Unit Testing Framework:
 - Built on Python's unittest framework with pytest integration
-- Total of 99 tests covering ~95% of the codebase functionality
+- Total of 112 tests covering ~98% of the codebase functionality
 - Includes both unit tests and integration tests
 
 Mock Testing Strategy:
@@ -61,15 +68,26 @@ Test Coverage Areas:
 - Hardware noise simulation and error mitigation
 - Mathematical accuracy of quantum information measures
 - Edge cases and error handling
-- NEW: Parallel processing and multiprocessing validation
-- NEW: Tutorial compliance and workflow integration
-- NEW: Mathematical correctness against theoretical equations
+- Parallel processing and multiprocessing validation
+- Tutorial compliance and workflow integration
+- Mathematical correctness against theoretical equations
+- LRU cache management and memory optimization
 
 Quality Assurance Features:
 - Warning suppression for external library deprecations (mthree, Qiskit)
 - Numerical stability testing with small floating-point values
 - Input validation and error handling verification
 - Performance testing for large qubit counts (up to 10 qubits)
+- Memory management through LRU cache with configurable size limits
+- Cache hit/miss ratio monitoring for performance optimization
+
+Memory Management Features (tested in TestCacheManagement):
+- LRU (Least Recently Used) cache implementation with OrderedDict
+- Configurable cache size limits (default: hypercube=16, power2=100, hamming=20)
+- Cache management API: clear_caches(), get_cache_info(), set_cache_sizes()
+- Automatic eviction of least recently used items when cache is full
+- Cache statistics tracking for performance monitoring
+- Memory leak prevention in tree visualization code
 
 Configuration and Execution
 ===========================
@@ -115,9 +133,9 @@ Test Data and Fixtures:
 - Includes known quantum states (Bell states, stabilizer states)
 - Validates against theoretical predictions from quantum information theory
 - Tests hardware noise models based on IBM Quantum device characteristics
-- NEW: Validates Hadamard superposition principle from tutorial equation (2)
-- NEW: Tests sign determination formula from tutorial equation (3)
-- NEW: Includes tutorial default parameters (111 trees, seed 999)
+- Validates Hadamard superposition principle from tutorial equation (2)
+- Tests sign determination formula from tutorial equation (3)
+- Includes tutorial default parameters (111 trees, seed 999)
 
 This test suite ensures the reliability, accuracy, and performance of the HRF
 quantum state tomography library across various quantum computing platforms

@@ -27,7 +27,11 @@ from hadamard_random_forest.random_forest import (
     get_cached_power2_nodes,
     get_cached_hamming_layers,
     get_or_create_pool,
-    cleanup_pool
+    cleanup_pool,
+    clear_caches,
+    get_cache_info,
+    set_cache_sizes,
+    LRUCache
 )
 
 
@@ -622,8 +626,7 @@ class TestOptimizationFeatures(unittest.TestCase):
     def test_get_cached_hypercube(self):
         """Test hypercube graph caching."""
         # Clear cache first
-        import hadamard_random_forest.random_forest as rf
-        rf._HYPERCUBE_CACHE.clear()
+        clear_caches()
         
         # First call should create and cache
         G1 = get_cached_hypercube(3)
@@ -643,8 +646,7 @@ class TestOptimizationFeatures(unittest.TestCase):
     def test_get_cached_power2_nodes(self):
         """Test power-of-2 nodes caching."""
         # Clear cache first
-        import hadamard_random_forest.random_forest as rf
-        rf._POWER2_NODES_CACHE.clear()
+        clear_caches()
         
         # Test for 3 qubits
         nodes3 = get_cached_power2_nodes(3)
@@ -661,8 +663,7 @@ class TestOptimizationFeatures(unittest.TestCase):
     def test_get_cached_hamming_layers(self):
         """Test Hamming layers caching."""
         # Clear cache first
-        import hadamard_random_forest.random_forest as rf
-        rf._HAMMING_LAYERS_CACHE.clear()
+        clear_caches()
         
         # Test for 2 qubits
         layers2 = get_cached_hamming_layers(2)
@@ -713,6 +714,168 @@ class TestOptimizationFeatures(unittest.TestCase):
         cleanup_pool()
         import hadamard_random_forest.random_forest as rf
         self.assertIsNone(rf._GLOBAL_POOL)
+
+
+class TestCacheManagement(unittest.TestCase):
+    """Test LRU cache management features."""
+    
+    def setUp(self):
+        """Clear caches and reset sizes before each test."""
+        clear_caches()
+        # Reset to default sizes
+        set_cache_sizes(hypercube=16, power2=100, hamming=20)
+    
+    def test_lru_cache_basic(self):
+        """Test basic LRUCache functionality."""
+        cache = LRUCache(max_size=3)
+        
+        # Test set and get
+        cache.set('a', 1)
+        cache.set('b', 2)
+        cache.set('c', 3)
+        
+        self.assertEqual(cache.get('a'), 1)
+        self.assertEqual(cache.get('b'), 2)
+        self.assertEqual(cache.get('c'), 3)
+        self.assertEqual(len(cache), 3)
+        
+        # Test cache miss
+        self.assertIsNone(cache.get('d'))
+        
+        # Test LRU eviction
+        cache.set('d', 4)  # Should evict 'a' since we accessed b and c after a
+        self.assertEqual(len(cache), 3)
+        self.assertIsNone(cache.get('a'))  # 'a' was evicted
+        self.assertEqual(cache.get('d'), 4)
+    
+    def test_lru_cache_statistics(self):
+        """Test cache statistics tracking."""
+        cache = LRUCache(max_size=2)
+        
+        # Initial state
+        info = cache.info()
+        self.assertEqual(info['size'], 0)
+        self.assertEqual(info['hits'], 0)
+        self.assertEqual(info['misses'], 0)
+        
+        # Add items and test hits/misses
+        cache.set('a', 1)
+        cache.get('a')  # Hit
+        cache.get('b')  # Miss
+        
+        info = cache.info()
+        self.assertEqual(info['hits'], 1)
+        self.assertEqual(info['misses'], 1)
+        self.assertEqual(info['hit_rate'], 0.5)
+    
+    def test_get_cache_info(self):
+        """Test get_cache_info function."""
+        # Clear caches first
+        clear_caches()
+        
+        # Initial state
+        info = get_cache_info()
+        self.assertIn('hypercube', info)
+        self.assertIn('power2_nodes', info)
+        self.assertIn('hamming_layers', info)
+        
+        for cache_name in ['hypercube', 'power2_nodes', 'hamming_layers']:
+            self.assertEqual(info[cache_name]['size'], 0)
+            self.assertGreater(info[cache_name]['max_size'], 0)
+        
+        # Add some cached items
+        get_cached_hypercube(3)
+        get_cached_power2_nodes(3)
+        get_cached_hamming_layers(3)
+        
+        info = get_cache_info()
+        self.assertEqual(info['hypercube']['size'], 1)
+        self.assertEqual(info['power2_nodes']['size'], 1)
+        self.assertEqual(info['hamming_layers']['size'], 1)
+    
+    def test_set_cache_sizes(self):
+        """Test dynamic cache size adjustment."""
+        # Set new sizes
+        set_cache_sizes(hypercube=5, power2=10, hamming=8)
+        
+        info = get_cache_info()
+        self.assertEqual(info['hypercube']['max_size'], 5)
+        self.assertEqual(info['power2_nodes']['max_size'], 10)
+        self.assertEqual(info['hamming_layers']['max_size'], 8)
+        
+        # Test partial updates
+        set_cache_sizes(hypercube=7)  # Only update hypercube
+        info = get_cache_info()
+        self.assertEqual(info['hypercube']['max_size'], 7)
+        self.assertEqual(info['power2_nodes']['max_size'], 10)  # Unchanged
+        self.assertEqual(info['hamming_layers']['max_size'], 8)  # Unchanged
+    
+    def test_cache_size_reduction(self):
+        """Test that reducing cache size evicts excess items."""
+        # Start with default size (16 for hypercube)
+        clear_caches()
+        
+        # Add multiple items
+        for i in range(10):
+            get_cached_hypercube(i)
+        
+        info = get_cache_info()
+        self.assertEqual(info['hypercube']['size'], 10)
+        
+        # Reduce cache size to 5
+        set_cache_sizes(hypercube=5)
+        
+        # Should evict oldest 5 items
+        info = get_cache_info()
+        self.assertEqual(info['hypercube']['size'], 5)
+        self.assertEqual(info['hypercube']['max_size'], 5)
+    
+    def test_cache_eviction_order(self):
+        """Test that LRU eviction follows correct order."""
+        clear_caches()
+        set_cache_sizes(hypercube=3)
+        
+        # Add items in order
+        get_cached_hypercube(1)
+        get_cached_hypercube(2)
+        get_cached_hypercube(3)
+        
+        # Access item 1 to make it most recent
+        get_cached_hypercube(1)
+        
+        # Add new item, should evict 2 (least recently used)
+        get_cached_hypercube(4)
+        
+        import hadamard_random_forest.random_forest as rf
+        self.assertIn(1, rf._HYPERCUBE_CACHE)
+        self.assertNotIn(2, rf._HYPERCUBE_CACHE)
+        self.assertIn(3, rf._HYPERCUBE_CACHE)
+        self.assertIn(4, rf._HYPERCUBE_CACHE)
+    
+    def test_clear_caches_function(self):
+        """Test that clear_caches properly resets all caches."""
+        # Add items to all caches
+        for i in range(5):
+            get_cached_hypercube(i)
+            get_cached_power2_nodes(i)
+            get_cached_hamming_layers(i)
+        
+        info = get_cache_info()
+        self.assertEqual(info['hypercube']['size'], 5)
+        self.assertEqual(info['power2_nodes']['size'], 5)
+        self.assertEqual(info['hamming_layers']['size'], 5)
+        
+        # Clear all caches
+        clear_caches()
+        
+        info = get_cache_info()
+        self.assertEqual(info['hypercube']['size'], 0)
+        self.assertEqual(info['power2_nodes']['size'], 0)
+        self.assertEqual(info['hamming_layers']['size'], 0)
+        
+        # Statistics should also be reset
+        self.assertEqual(info['hypercube']['hits'], 0)
+        self.assertEqual(info['hypercube']['misses'], 0)
 
 
 class TestSignDetermination(unittest.TestCase):

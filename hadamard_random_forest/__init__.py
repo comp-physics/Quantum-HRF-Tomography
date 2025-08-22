@@ -10,7 +10,7 @@ from __future__ import annotations
 
 # Package Metadata
 __title__ = "hadamard_random_forest"
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __license__ = "MIT"
 
 # Core functionality from main module
@@ -18,7 +18,11 @@ from .random_forest import (
     fix_random_seed,
     optimized_uniform_spanning_tree,
     generate_hypercube_tree,
-    generate_random_forest
+    generate_random_forest,
+    # Cache management
+    clear_caches,
+    get_cache_info,
+    set_cache_sizes
 )
 
 from .sample import (
@@ -50,6 +54,10 @@ __all__ = [
     "get_samples_noisy",
     "get_samples_hardware",
     "get_statevector",
+    # cache management
+    "clear_caches",
+    "get_cache_info",
+    "set_cache_sizes",
     # utilities
     "random_statevector",
     "logarithmic_negativity",
