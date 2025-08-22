@@ -21,7 +21,13 @@ from hadamard_random_forest.random_forest import (
     get_signs,
     majority_voting,
     generate_random_forest,
-    _generate_single_tree_worker
+    _generate_single_tree_worker,
+    _generate_batch_trees_worker,
+    get_cached_hypercube,
+    get_cached_power2_nodes,
+    get_cached_hamming_layers,
+    get_or_create_pool,
+    cleanup_pool
 )
 
 
@@ -543,11 +549,12 @@ class TestParallelProcessing(unittest.TestCase):
     def test_parallel_threshold_logic(self):
         """Test that parallel processing is only used when appropriate."""
         # Test with num_trees below threshold (should use sequential)
+        # New threshold is 100 trees
         with patch('hadamard_random_forest.random_forest.mp.cpu_count', return_value=4):
             with patch('hadamard_random_forest.random_forest.logging') as mock_logging:
                 fix_random_seed(42)
                 generate_random_forest(
-                    self.num_qubits, 2, self.samples, save_tree=False, show_tree=False  # Below threshold
+                    self.num_qubits, 50, self.samples, save_tree=False, show_tree=False  # Below 100 threshold
                 )
                 # Should not log parallel processing message
                 mock_logging.info.assert_not_called()
@@ -557,7 +564,7 @@ class TestParallelProcessing(unittest.TestCase):
             with patch('hadamard_random_forest.random_forest.logging') as mock_logging:
                 fix_random_seed(42)
                 generate_random_forest(
-                    self.num_qubits, 5, self.samples, save_tree=False, show_tree=False  # Above threshold
+                    self.num_qubits, 111, self.samples, save_tree=False, show_tree=False  # Above 100 threshold
                 )
                 # Should log parallel processing message
                 mock_logging.info.assert_called_once()
@@ -571,35 +578,141 @@ class TestParallelProcessing(unittest.TestCase):
                     with patch('matplotlib.pyplot.savefig'):  # Mock the actual file saving
                         fix_random_seed(42)
                         generate_random_forest(
-                            self.num_qubits, 5, self.samples, save_tree=True, show_tree=False  # Visualization enabled
+                            self.num_qubits, 111, self.samples, save_tree=True, show_tree=False  # Visualization enabled, above threshold
                         )
                         # Should not use parallel processing due to visualization
                         mock_logging.info.assert_not_called()
 
-    @patch('hadamard_random_forest.random_forest.mp.Pool')
-    def test_multiprocessing_pool_usage(self, mock_pool_class):
-        """Test that multiprocessing.Pool is used correctly."""
+    @patch('hadamard_random_forest.random_forest.get_or_create_pool')
+    def test_multiprocessing_pool_usage(self, mock_get_pool):
+        """Test that multiprocessing pool is used correctly for large tree counts."""
         mock_pool = MagicMock()
-        mock_pool_class.return_value.__enter__.return_value = mock_pool
+        mock_get_pool.return_value = mock_pool
         
-        # Mock pool.map to return expected results
-        expected_results = [(i, np.array([1, -1, 1, -1, 1, -1, 1, -1])) for i in range(5)]
-        mock_pool.map.return_value = expected_results
+        # Mock pool.map to return expected batch results
+        # With batch processing, we return lists of (tree_index, signs) tuples
+        batch_results = []
+        for batch_idx in range(8):  # Assuming 8 batches for 111 trees
+            batch = []
+            start_idx = batch_idx * 14  # roughly 111/8
+            end_idx = min(start_idx + 14, 111)
+            for i in range(start_idx, end_idx):
+                batch.append((i, np.array([1, -1, 1, -1, 1, -1, 1, -1])))
+            batch_results.append(batch)
+        mock_pool.map.return_value = batch_results
         
         with patch('hadamard_random_forest.random_forest.mp.cpu_count', return_value=4):
             fix_random_seed(42)
             result = generate_random_forest(
-                self.num_qubits, 5, self.samples, save_tree=False, show_tree=False
+                self.num_qubits, 111, self.samples, save_tree=False, show_tree=False  # Above threshold
             )
             
-            # Verify Pool was created and used
-            mock_pool_class.assert_called_once()
+            # Verify pool was obtained and used
+            mock_get_pool.assert_called_once()
             mock_pool.map.assert_called_once()
             
-            # Verify the function argument to map
+            # Verify the function argument to map is the batch worker
             args, kwargs = mock_pool.map.call_args
-            self.assertEqual(args[0], _generate_single_tree_worker)
-            self.assertEqual(len(args[1]), 5)  # 5 worker arguments
+            self.assertEqual(args[0], _generate_batch_trees_worker)
+
+
+class TestOptimizationFeatures(unittest.TestCase):
+    """Test optimization features including caching and batch processing."""
+    
+    def test_get_cached_hypercube(self):
+        """Test hypercube graph caching."""
+        # Clear cache first
+        import hadamard_random_forest.random_forest as rf
+        rf._HYPERCUBE_CACHE.clear()
+        
+        # First call should create and cache
+        G1 = get_cached_hypercube(3)
+        self.assertIsInstance(G1, nx.Graph)
+        self.assertEqual(len(G1.nodes), 8)
+        self.assertEqual(len(G1.edges), 12)
+        
+        # Second call should return cached instance
+        G2 = get_cached_hypercube(3)
+        self.assertIs(G1, G2)  # Should be the exact same object
+        
+        # Different dimension should create new graph
+        G3 = get_cached_hypercube(4)
+        self.assertIsNot(G1, G3)
+        self.assertEqual(len(G3.nodes), 16)
+    
+    def test_get_cached_power2_nodes(self):
+        """Test power-of-2 nodes caching."""
+        # Clear cache first
+        import hadamard_random_forest.random_forest as rf
+        rf._POWER2_NODES_CACHE.clear()
+        
+        # Test for 3 qubits
+        nodes3 = get_cached_power2_nodes(3)
+        self.assertEqual(nodes3, [1, 2, 4])
+        
+        # Second call should return cached
+        nodes3_2 = get_cached_power2_nodes(3)
+        self.assertEqual(nodes3, nodes3_2)
+        
+        # Test for 4 qubits
+        nodes4 = get_cached_power2_nodes(4)
+        self.assertEqual(nodes4, [1, 2, 4, 8])
+    
+    def test_get_cached_hamming_layers(self):
+        """Test Hamming layers caching."""
+        # Clear cache first
+        import hadamard_random_forest.random_forest as rf
+        rf._HAMMING_LAYERS_CACHE.clear()
+        
+        # Test for 2 qubits
+        layers2 = get_cached_hamming_layers(2)
+        self.assertIsInstance(layers2, dict)
+        self.assertEqual(layers2[0], [0])  # Hamming weight 0
+        self.assertEqual(set(layers2[1]), {1, 2})  # Hamming weight 1
+        self.assertEqual(layers2[2], [3])  # Hamming weight 2
+        
+        # Second call should return cached
+        layers2_2 = get_cached_hamming_layers(2)
+        self.assertEqual(layers2, layers2_2)
+    
+    def test_generate_batch_trees_worker(self):
+        """Test batch tree generation worker."""
+        num_qubits = 3
+        fix_random_seed(42)
+        samples = [np.random.rand(2**num_qubits) for _ in range(num_qubits + 1)]
+        
+        # Test batch processing
+        tree_indices = [0, 1, 2]
+        base_seed = 42
+        args = (num_qubits, samples, tree_indices, base_seed)
+        
+        results = _generate_batch_trees_worker(args)
+        
+        # Check results structure
+        self.assertEqual(len(results), 3)
+        for i, (tree_idx, signs) in enumerate(results):
+            self.assertEqual(tree_idx, i)
+            self.assertIsInstance(signs, np.ndarray)
+            self.assertEqual(signs.shape, (2**num_qubits,))
+            self.assertTrue(np.all(np.isin(signs, [-1, 1])))
+    
+    def test_pool_management(self):
+        """Test persistent pool creation and cleanup."""
+        # Clean up any existing pool
+        cleanup_pool()
+        
+        # Create pool
+        pool1 = get_or_create_pool(2)
+        self.assertIsNotNone(pool1)
+        
+        # Second call should return same pool
+        pool2 = get_or_create_pool(2)
+        self.assertIs(pool1, pool2)
+        
+        # Cleanup should work
+        cleanup_pool()
+        import hadamard_random_forest.random_forest as rf
+        self.assertIsNone(rf._GLOBAL_POOL)
 
 
 class TestSignDetermination(unittest.TestCase):

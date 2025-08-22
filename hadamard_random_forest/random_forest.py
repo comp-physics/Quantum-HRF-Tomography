@@ -9,8 +9,10 @@ import random
 import logging
 import warnings
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 import multiprocessing as mp
+import functools
+import atexit
 
 import numpy as np
 import networkx as nx
@@ -18,6 +20,17 @@ import treelib
 from math import comb  
 from scipy.sparse import coo_matrix
 import matplotlib.pyplot as plt
+
+# Global cache for hypercube graphs to avoid recreation
+_HYPERCUBE_CACHE: Dict[int, nx.Graph] = {}
+
+# Global persistent worker pool
+_GLOBAL_POOL: Optional[mp.Pool] = None
+_POOL_SIZE: Optional[int] = None
+
+# Cache for pre-computed values
+_POWER2_NODES_CACHE: Dict[int, List[int]] = {}
+_HAMMING_LAYERS_CACHE: Dict[int, Dict[int, List[int]]] = {}
 
 
 def fix_random_seed(seed: int) -> None:
@@ -58,6 +71,108 @@ def pascal_layer(n: int, k: int) -> int:
     return comb(n, k)
 
 
+def get_or_create_pool(size: Optional[int] = None) -> mp.Pool:
+    """
+    Get or create a persistent worker pool.
+    
+    Args:
+        size: Number of processes. If None, uses cpu_count().
+    
+    Returns:
+        A multiprocessing Pool instance.
+    """
+    global _GLOBAL_POOL, _POOL_SIZE
+    
+    if size is None:
+        size = mp.cpu_count()
+    
+    if _GLOBAL_POOL is None or _POOL_SIZE != size:
+        if _GLOBAL_POOL is not None:
+            _GLOBAL_POOL.close()
+            _GLOBAL_POOL.join()
+        
+        _GLOBAL_POOL = mp.Pool(size)
+        _POOL_SIZE = size
+        
+        # Register cleanup on exit
+        atexit.register(cleanup_pool)
+    
+    return _GLOBAL_POOL
+
+
+def cleanup_pool() -> None:
+    """Clean up the global worker pool."""
+    global _GLOBAL_POOL
+    if _GLOBAL_POOL is not None:
+        _GLOBAL_POOL.close()
+        _GLOBAL_POOL.join()
+        _GLOBAL_POOL = None
+
+
+def get_cached_hypercube(dimension: int) -> nx.Graph:
+    """
+    Get a cached hypercube graph or create and cache a new one.
+    
+    Args:
+        dimension: Dimension of the hypercube.
+    
+    Returns:
+        A NetworkX hypercube graph with integer labels.
+    """
+    global _HYPERCUBE_CACHE
+    
+    if dimension not in _HYPERCUBE_CACHE:
+        G = nx.hypercube_graph(dimension)
+        G = nx.convert_node_labels_to_integers(G)
+        _HYPERCUBE_CACHE[dimension] = G
+    
+    return _HYPERCUBE_CACHE[dimension]
+
+
+def get_cached_power2_nodes(dimension: int) -> List[int]:
+    """
+    Get cached power-of-2 nodes for a given dimension.
+    
+    Args:
+        dimension: Number of qubits.
+    
+    Returns:
+        List of power-of-2 node indices.
+    """
+    global _POWER2_NODES_CACHE
+    
+    if dimension not in _POWER2_NODES_CACHE:
+        N = 2**dimension
+        _POWER2_NODES_CACHE[dimension] = [
+            node for node in range(N) 
+            if node > 0 and (node & (node - 1)) == 0
+        ]
+    
+    return _POWER2_NODES_CACHE[dimension]
+
+
+def get_cached_hamming_layers(dimension: int) -> Dict[int, List[int]]:
+    """
+    Get cached Hamming weight layers for a given dimension.
+    
+    Args:
+        dimension: Number of qubits.
+    
+    Returns:
+        Dictionary mapping Hamming weight to list of nodes.
+    """
+    global _HAMMING_LAYERS_CACHE
+    
+    if dimension not in _HAMMING_LAYERS_CACHE:
+        N = 2**dimension
+        layers = {}
+        for k in range(dimension + 1):
+            layers[k] = [node for node in range(N) if hamming_weight(node) == k]
+        _HAMMING_LAYERS_CACHE[dimension] = layers
+    
+    return _HAMMING_LAYERS_CACHE[dimension]
+
+
 def optimized_uniform_spanning_tree(G: nx.Graph, dimension: int) -> nx.Graph:
     """
     Generate a structured Uniform Spanning Tree (UST) on an n-dimensional hypercube graph.
@@ -77,14 +192,14 @@ def optimized_uniform_spanning_tree(G: nx.Graph, dimension: int) -> nx.Graph:
     root = 0
     tree.add_node(root)
 
-    # Connect root to all power-of-2 nodes (depth 1)
-    power2_nodes = [node for node in G.nodes if node > 0 and (node & (node - 1)) == 0]
+    # Use cached power-of-2 nodes
+    power2_nodes = get_cached_power2_nodes(dimension)
     first_depth = sorted(set(G.neighbors(root)) & set(power2_nodes))
     for node in first_depth:
         tree.add_edge(root, node)
 
-    # Build layers according to Hamming weight
-    layers = {k: [node for node in G.nodes if hamming_weight(node) == k] for k in range(dimension + 1)}
+    # Use cached Hamming layers
+    layers = get_cached_hamming_layers(dimension)
     available = set(first_depth) | {root}
 
     # BFS-like expansion for layers 2,...,n
@@ -110,9 +225,8 @@ def generate_hypercube_tree(dimension: int) -> Tuple[treelib.Tree, nx.Graph]:
             tree: A treelib.Tree object representing the hierarchy of nodes.
             spanning_tree: The NetworkX Graph of the generated spanning tree.
     """
-    # Build and label hypercube graph
-    G = nx.hypercube_graph(dimension)
-    G = nx.convert_node_labels_to_integers(G)
+    # Use cached hypercube graph
+    G = get_cached_hypercube(dimension)
 
     # Generate optimized UST
     spanning_tree = optimized_uniform_spanning_tree(G, dimension)
@@ -352,13 +466,53 @@ def _generate_single_tree_worker(args: Tuple) -> Tuple[int, np.ndarray]:
     return tree_index, signs
 
 
+def _generate_batch_trees_worker(args: Tuple) -> List[Tuple[int, np.ndarray]]:
+    """
+    Worker function to generate a batch of trees and compute signs.
+    Processes multiple trees in a single worker to amortize overhead.
+    
+    Args:
+        args: Tuple containing (num_qubits, samples_info, tree_indices, base_seed)
+              where samples_info is either samples array or (shm_name, shape, dtype)
+        
+    Returns:
+        List of (tree_index, signs) tuples for all trees in the batch
+    """
+    num_qubits, samples_info, tree_indices, base_seed = args
+    
+    # For now, samples_info is always the samples list directly (shared memory disabled due to crashes)
+    samples = samples_info
+    
+    results = []
+    
+    # Process each tree in the batch
+    for tree_index in tree_indices:
+        # Set unique random seed for this tree
+        worker_seed = base_seed + tree_index * 1000
+        fix_random_seed(worker_seed)
+        
+        # Generate tree and compute signs
+        tree, _ = generate_hypercube_tree(num_qubits)
+        roots, leafs = find_global_roots_and_leafs(tree, num_qubits)
+        paths = get_path(tree, num_qubits)
+        pmatrix = get_path_sparse_matrix(paths, num_qubits)
+        idx_cumsum = np.insert(np.cumsum(pmatrix.getnnz(axis=1)), 0, 0)
+        weights = get_weight(samples, roots, leafs, num_qubits)
+        signs = get_signs(weights, pmatrix, paths, idx_cumsum)
+        
+        results.append((tree_index, signs))
+    
+    return results
+
+
 def generate_random_forest(
     num_qubits: int,
     num_trees: int,
     samples: List[np.ndarray],
     save_tree: bool = True,
     show_tree: bool = False,
-    show_first: bool = False
+    show_first: bool = False,
+    use_optimized: bool = True  # Flag to enable/disable optimizations for testing
 ) -> np.ndarray:
     """
     Build multiple random spanning trees on a hypercube and aggregate signs by majority voting.
@@ -369,6 +523,7 @@ def generate_random_forest(
         num_trees: Number of random trees to generate.
         samples: List of sample probability arrays used to compute weights.
         save_tree: If True, save the first 5 tree plots under 'forest gallery/{num_qubits}-qubit/'.
+        use_optimized: If True, use optimized batch processing and shared memory.
 
     Returns:
         A 1D numpy array of length 2**num_qubits containing final +1/-1 signs.
@@ -384,27 +539,51 @@ def generate_random_forest(
         save_tree = False
         show_first = False
 
-
-    # Pre-allocate signs array for all trees to avoid expensive np.vstack operations
+    # Pre-allocate signs array for all trees
     N = 2**num_qubits
     signs_stack = np.zeros((num_trees, N), dtype=float)
 
     # Determine if we should use parallel processing
-    # Use parallel processing for larger num_trees, but avoid when visualization is needed
-    # or when multiprocessing overhead would exceed benefits
-    USE_PARALLEL_THRESHOLD = 4
+    USE_PARALLEL_THRESHOLD = 100
+    num_cores = mp.cpu_count()
     use_parallel = (
         num_trees >= USE_PARALLEL_THRESHOLD and 
         not (save_tree or show_tree) and  # Visualization complicates multiprocessing
-        mp.cpu_count() > 1  # Only if multiple cores available
+        num_cores > 1  # Only if multiple cores available
     )
     
-    # Generate base seed for reproducible results across workers
+    # Generate base seed for reproducible results
     base_seed = random.randint(0, 2**31 - 1)
     
-    if use_parallel:
-        # Parallel processing path
-        logging.info(f"Using parallel processing with {mp.cpu_count()} cores for {num_trees} trees")
+    if use_parallel and use_optimized:
+        # OPTIMIZED PARALLEL PATH with batch processing
+        logging.info(f"Using optimized parallel processing with {num_cores} cores for {num_trees} trees")
+        
+        # Calculate optimal batch size
+        batch_size = max(1, num_trees // (num_cores * 2))  # 2x oversubscription for better load balancing
+        
+        # Prepare batch arguments (without shared memory for now - causing crashes)
+        batches = []
+        for i in range(0, num_trees, batch_size):
+            tree_indices = list(range(i, min(i + batch_size, num_trees)))
+            # Pass samples directly - simpler and more stable
+            batches.append((num_qubits, samples, tree_indices, base_seed))
+        
+        # Use persistent pool with optimal chunksize
+        pool = get_or_create_pool(num_cores)
+        chunksize = max(1, len(batches) // (num_cores * 4))
+        
+        # Process batches in parallel
+        batch_results = pool.map(_generate_batch_trees_worker, batches, chunksize=chunksize)
+        
+        # Collect results
+        for batch_result in batch_results:
+            for tree_index, signs in batch_result:
+                signs_stack[tree_index] = signs
+                
+    elif use_parallel:
+        # ORIGINAL PARALLEL PATH (for comparison)
+        logging.info(f"Using standard parallel processing with {num_cores} cores for {num_trees} trees")
         
         # Prepare arguments for worker processes
         worker_args = [
