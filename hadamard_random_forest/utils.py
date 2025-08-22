@@ -3,7 +3,7 @@ Helper functions for estimating quantum state properties such as entanglement, m
 """
 
 from __future__ import annotations
-from typing import  List, Tuple, Sequence 
+from typing import  List, Tuple, Sequence, Union 
 
 import numpy as np
 from qiskit import QuantumCircuit
@@ -144,18 +144,35 @@ def integer_to_pauli(
 
 def stabilizer_entropy(
     alpha: float,
-    psi: np.ndarray
+    psi: Union[np.ndarray, Statevector]
 ) -> float:
     """
     Calculate the exact alpha-Rényi Stabilizer Entropy for a pure state.
 
     Args:
-        alpha: entropic index.
-        psi: Statevector as a 1D numpy array of length 2**num_qubits.
+        alpha: entropic index. Must be non-negative and not equal to 1.
+               For alpha=1 (Shannon entropy case), use a value very close to 1.
+        psi: Statevector object or 1D numpy array of length 2**num_qubits representing the quantum state.
 
     Returns:
         The stabilizer entropy S_alpha(psi).
+        
+    Raises:
+        ValueError: If alpha is negative or exactly equal to 1.
     """
+    # Input validation
+    if alpha < 0:
+        raise ValueError(f"Alpha must be non-negative, got {alpha}")
+    if abs(alpha - 1.0) < 1e-15:
+        raise ValueError(
+            f"Alpha cannot be exactly 1 (got {alpha}). "
+            "For Shannon entropy (α=1), use a value very close to 1, e.g., α=1±1e-10"
+        )
+    
+    # Convert numpy array to Statevector if needed
+    if isinstance(psi, np.ndarray):
+        psi = Statevector(psi)
+    
     num_qubits = int(np.log2(len(psi)))
 
     # Generate the n-qubit Pauli group including 4^n combinations of Pauli strings
@@ -171,8 +188,9 @@ def stabilizer_entropy(
     expval_list = np.array(expval_list)
     moment = np.sum(expval_list**(2*alpha)/(2**num_qubits))
     
-    # Calculate final stabilizer entropy
-    entropy = np.log2(moment)/(1-alpha) 
+    # Calculate final stabilizer entropy using Rényi entropy formula
+    # S_α = (1/(1-α)) * log2(∑ p_i^α) where p_i = |⟨P_i|ψ⟩|^2 / 2^n
+    entropy = np.log2(moment) / (1 - alpha)
 
     return entropy
 
@@ -184,7 +202,7 @@ def swap_test(
     state2: np.ndarray | QuantumCircuit,
     backend: Backend,
     shots: int
-) -> Tuple[List[QuantumCircuit],  List[float],  List[float]]:
+) -> Tuple[QuantumCircuit, float, float]:
     """
     Build and run a SWAP test to compare two quantum states, returning the circuit,
     the estimated overlap from measurement, and the exact overlap.
@@ -194,12 +212,12 @@ def swap_test(
         state2: A statevector array (same length) or QuantumCircuit preparing the second state.
         backend: Qiskit backend (e.g., sampler) to run the SWAP-test circuit with measurements.
         shots: Number of shots for estimating the overlap.
-        seed: Seed for measurements randomness.
 
     Returns:
-        qc: The SWAP-test QuantumCircuit with measurement.
-        overlap_est: Estimated overlap |<ψ1|ψ2>|^2 from measurement data.
-        overlap_exact: Exact overlap computed via statevectors.
+        A tuple containing:
+            qc: The SWAP-test QuantumCircuit with measurement.
+            overlap_est: Estimated overlap |<ψ1|ψ2>|^2 from measurement data.
+            overlap_exact: Exact overlap computed via statevectors.
     """
     # Determine qubit count and build preparation circuits
     if isinstance(state1, np.ndarray):

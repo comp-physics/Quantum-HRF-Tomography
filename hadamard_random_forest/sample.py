@@ -6,6 +6,8 @@ main.py
 
 from __future__ import annotations
 from typing import Dict, List, Tuple , Any
+import warnings
+import functools
 
 import numpy as np
 
@@ -18,6 +20,40 @@ from mthree import M3Mitigation
 import mthree.utils as mthree_utils
 
 from .random_forest import generate_random_forest
+
+
+def _suppress_mthree_warnings(func):
+    """
+    Decorator to selectively suppress only mthree deprecation warnings.
+    
+    This is a targeted approach that only suppresses known deprecation warnings
+    from the mthree.utils module while preserving all other warnings.
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with warnings.catch_warnings():
+            # Very specific filter: only ignore DeprecationWarnings from mthree.utils
+            warnings.filterwarnings(
+                "ignore", 
+                category=DeprecationWarning, 
+                module="mthree.utils"
+            )
+            return func(*args, **kwargs)
+    return wrapper
+
+
+@_suppress_mthree_warnings
+def _safe_final_measurement_mapping(circuit):
+    """
+    Safely call mthree_utils.final_measurement_mapping with targeted warning suppression.
+    
+    Args:
+        circuit: QuantumCircuit to analyze
+        
+    Returns:
+        Measurement mapping from mthree
+    """
+    return mthree_utils.final_measurement_mapping(circuit)
 
 def get_circuits(
     num_qubits: int,
@@ -215,11 +251,7 @@ def get_samples_hardware(
     # Submit jobs and collect raw counts
     for idx, circ in enumerate(circuits):
         # Measurement mitigation setup
-        # Suppress mthree deprecation warnings from external library
-        import warnings
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=DeprecationWarning, module="mthree.utils")
-            mapping = mthree_utils.final_measurement_mapping(circ)
+        mapping = _safe_final_measurement_mapping(circ)
         key = str(mapping)
         if error_mitigation and key not in mapping_mit:
             # print("=========== New M3 calibration detected ===========")
@@ -250,11 +282,7 @@ def get_samples_hardware(
     for (counts, key), raw in zip(results, raw_samples):
         if error_mitigation:
             mit = mapping_mit[key]
-            # Suppress mthree deprecation warnings from external library
-            import warnings
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=DeprecationWarning, module="mthree.utils")
-                circuit_mapping = mthree_utils.final_measurement_mapping(circuits[0])
+            circuit_mapping = _safe_final_measurement_mapping(circuits[0])
             quasi = mit.apply_correction(counts, circuit_mapping)
             probs = quasi.nearest_probability_distribution()
             vec = np.zeros(2**num_qubits, dtype=float)
@@ -307,14 +335,15 @@ def get_statevector(
     # Normalization
     statevector = amplitudes * signs
     norm = np.linalg.norm(statevector)
-    if norm > 0:
+    if norm > 1e-12:  # Use a small threshold to handle numerical precision
         statevector = statevector / norm
     else:
-        # Handle zero norm case - return normalized zero vector
-        import warnings
-        warnings.warn("Statevector has zero norm; returning normalized zero vector.", UserWarning)
-        statevector = np.zeros_like(statevector)
-        if len(statevector) > 0:
-            statevector[0] = 1.0  # Set first element to 1 for valid quantum state
+        # Handle zero norm case - this indicates a fundamental problem with the reconstruction
+        raise ValueError(
+            f"Statevector has effectively zero norm ({norm:.2e}). "
+            "This indicates that the quantum state reconstruction failed, likely due to "
+            "insufficient or invalid sample data. Please check your input samples and "
+            "ensure they represent valid probability distributions."
+        )
 
     return statevector

@@ -10,6 +10,7 @@ import logging
 import warnings
 from pathlib import Path
 from typing import List, Optional, Tuple
+import multiprocessing as mp
 
 import numpy as np
 import networkx as nx
@@ -269,9 +270,27 @@ def get_signs(
             signs[i] = np.prod(weights[path], axis=0)
         return signs
 
+    # Validate idx_path_matrix has sufficient elements for slicing
+    if len(idx_path_matrix) < 2:
+        # Fall back to dense method for edge cases
+        signs = np.zeros_like(weights)
+        for i, path in enumerate(path_to_node):
+            signs[i] = np.prod(weights[path], axis=0)
+        return signs
+
     # Using sparse matrix reduction
     data = path_matrix.multiply(weights).data
-    return np.multiply.reduceat(data, idx_path_matrix[:-1])
+    indices = idx_path_matrix[:-1]
+    
+    # Additional safety check for empty data or indices
+    if len(data) == 0 or len(indices) == 0:
+        # Fall back to dense method
+        signs = np.zeros_like(weights)
+        for i, path in enumerate(path_to_node):
+            signs[i] = np.prod(weights[path], axis=0)
+        return signs
+    
+    return np.multiply.reduceat(data, indices)
 
 
 def majority_voting(votes: np.ndarray) -> np.ndarray:
@@ -295,6 +314,42 @@ def majority_voting(votes: np.ndarray) -> np.ndarray:
         result[result == 0] = 1
     return result
 
+
+def _generate_single_tree_worker(args: Tuple) -> Tuple[int, np.ndarray]:
+    """
+    Worker function to generate a single tree and compute signs.
+    
+    This function is designed to be used with multiprocessing to parallelize
+    tree generation across multiple CPU cores.
+    
+    Args:
+        args: Tuple containing (num_qubits, samples, tree_index, base_seed)
+        
+    Returns:
+        Tuple of (tree_index, signs) where signs is the computed sign array
+    """
+    num_qubits, samples, tree_index, base_seed = args
+    
+    # Set unique random seed for this worker to ensure reproducible but different results
+    worker_seed = base_seed + tree_index * 1000  # Large offset to avoid seed collisions
+    fix_random_seed(worker_seed)
+    
+    # Step 1: generate random spanning tree
+    tree, spanning = generate_hypercube_tree(num_qubits)
+
+    # Step 2: find global roots and leaves
+    roots, leafs = find_global_roots_and_leafs(tree, num_qubits)
+
+    # Step 3: convert to matrix form for parallel sign computation
+    paths = get_path(tree, num_qubits)
+    pmatrix = get_path_sparse_matrix(paths, num_qubits)
+    idx_cumsum = np.insert(np.cumsum(pmatrix.getnnz(axis=1)), 0, 0)
+
+    # Step 4: compute weights and signs
+    weights = get_weight(samples, roots, leafs, num_qubits)
+    signs = get_signs(weights, pmatrix, paths, idx_cumsum)
+    
+    return tree_index, signs
 
 
 def generate_random_forest(
@@ -330,70 +385,105 @@ def generate_random_forest(
         show_first = False
 
 
-    signs_stack: Optional[np.ndarray] = None
+    # Pre-allocate signs array for all trees to avoid expensive np.vstack operations
+    N = 2**num_qubits
+    signs_stack = np.zeros((num_trees, N), dtype=float)
 
-    # Prepare output directory if needed
-    if save_tree:
-        base_dir = Path("forest gallery") / f"{num_qubits}-qubit"
-        base_dir.mkdir(parents=True, exist_ok=True)
+    # Determine if we should use parallel processing
+    # Use parallel processing for larger num_trees, but avoid when visualization is needed
+    # or when multiprocessing overhead would exceed benefits
+    USE_PARALLEL_THRESHOLD = 4
+    use_parallel = (
+        num_trees >= USE_PARALLEL_THRESHOLD and 
+        not (save_tree or show_tree) and  # Visualization complicates multiprocessing
+        mp.cpu_count() > 1  # Only if multiple cores available
+    )
+    
+    # Generate base seed for reproducible results across workers
+    base_seed = random.randint(0, 2**31 - 1)
+    
+    if use_parallel:
+        # Parallel processing path
+        logging.info(f"Using parallel processing with {mp.cpu_count()} cores for {num_trees} trees")
+        
+        # Prepare arguments for worker processes
+        worker_args = [
+            (num_qubits, samples, tree_index, base_seed) 
+            for tree_index in range(num_trees)
+        ]
+        
+        # Use multiprocessing to generate trees in parallel
+        with mp.Pool() as pool:
+            results = pool.map(_generate_single_tree_worker, worker_args)
+        
+        # Collect results in correct order
+        for tree_index, signs in results:
+            signs_stack[tree_index] = signs
+            
+    else:
+        # Sequential processing path (original implementation)
+        # Prepare output directory if needed
+        if save_tree:
+            base_dir = Path("forest gallery") / f"{num_qubits}-qubit"
+            base_dir.mkdir(parents=True, exist_ok=True)
 
-    for m in range(num_trees):
-        # Step 1: generate random spanning tree
-        tree, spanning = generate_hypercube_tree(num_qubits)
+        for m in range(num_trees):
+            # Set deterministic seed for this tree
+            tree_seed = base_seed + m * 1000
+            fix_random_seed(tree_seed)
+            
+            # Step 1: generate random spanning tree
+            tree, spanning = generate_hypercube_tree(num_qubits)
 
-        # Step 2: find global roots and leaves
-        roots, leafs = find_global_roots_and_leafs(tree, num_qubits)
+            # Step 2: find global roots and leaves
+            roots, leafs = find_global_roots_and_leafs(tree, num_qubits)
 
-        # Step 3: convert to matrix form for parallel sign computation
-        paths = get_path(tree, num_qubits)
-        pmatrix = get_path_sparse_matrix(paths, num_qubits)
-        idx_cumsum = np.insert(np.cumsum(pmatrix.getnnz(axis=1)), 0, 0)
+            # Step 3: convert to matrix form for parallel sign computation
+            paths = get_path(tree, num_qubits)
+            pmatrix = get_path_sparse_matrix(paths, num_qubits)
+            idx_cumsum = np.insert(np.cumsum(pmatrix.getnnz(axis=1)), 0, 0)
 
-        # Step 4: compute weights and signs
-        weights = get_weight(samples, roots, leafs, num_qubits)
-        signs = get_signs(weights, pmatrix, paths, idx_cumsum)
+            # Step 4: compute weights and signs
+            weights = get_weight(samples, roots, leafs, num_qubits)
+            signs = get_signs(weights, pmatrix, paths, idx_cumsum)
 
-        # Optional: save first 5 tree visualizations
-        if save_tree and m < 5:
-            try:
-                G = nx.hypercube_graph(num_qubits)
-                G = nx.convert_node_labels_to_integers(G)
-                pos = nx.drawing.nx_agraph.graphviz_layout(G, prog="dot")
+            # Optional: save first 5 tree visualizations
+            if save_tree and m < 5:
+                current_fig = None
+                try:
+                    G = nx.hypercube_graph(num_qubits)
+                    G = nx.convert_node_labels_to_integers(G)
+                    pos = nx.drawing.nx_agraph.graphviz_layout(G, prog="dot")
 
-                # Dynamically size the figure
-                base_size = 6
-                extra = max(0, num_qubits - 5)
-                width_factor  = 2 ** extra
-                height_factor = 1.5 ** extra
-                plt.figure(figsize=(base_size * width_factor, base_size * height_factor))
+                    # Dynamically size the figure
+                    base_size = 6
+                    extra = max(0, num_qubits - 5)
+                    width_factor  = 2 ** extra
+                    height_factor = 1.5 ** extra
+                    current_fig = plt.figure(figsize=(base_size * width_factor, base_size * height_factor))
 
-                nx.draw_networkx_edges(G, pos, edge_color='tab:gray', alpha=0.2, width=2)
-                nx.draw_networkx_edges(spanning, pos, edge_color='tab:gray', width=3)
-                node_colors = ['tab:blue' if s == 1 else 'tab:orange' for s in signs]
-                nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=400, edgecolors='black')
-                nx.draw_networkx_labels(G, pos, font_color="white")
+                    nx.draw_networkx_edges(G, pos, edge_color='tab:gray', alpha=0.2, width=2)
+                    nx.draw_networkx_edges(spanning, pos, edge_color='tab:gray', width=3)
+                    node_colors = ['tab:blue' if s == 1 else 'tab:orange' for s in signs]
+                    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=400, edgecolors='black')
+                    nx.draw_networkx_labels(G, pos, font_color="white")
 
-                plt.axis('off')
-                plt.tight_layout()
-                fig_path = base_dir / f"tree_{m}.png"
-                plt.savefig(fig_path, bbox_inches='tight', pad_inches=0, transparent=True, dpi=200)
+                    plt.axis('off')
+                    plt.tight_layout()
+                    fig_path = base_dir / f"tree_{m}.png"
+                    plt.savefig(fig_path, bbox_inches='tight', pad_inches=0, transparent=True, dpi=200)
 
-                if show_tree and m == 0:
-                    # this will pop up the first tree in-line (or in a window)
-                    plt.show()
-            finally:
-                # Always close the figure to prevent memory leaks
-                plt.close()
+                    if show_tree and m == 0:
+                        # this will pop up the first tree in-line (or in a window)
+                        plt.show()
+                finally:
+                    # Always close the figure to prevent memory leaks, but only if it was created
+                    if current_fig is not None:
+                        plt.close(current_fig)
 
-        # Accumulate for majority voting
-        if signs_stack is None:
-            signs_stack = signs
-        else:
-            signs_stack = np.vstack([signs_stack, signs])
+            # Store signs for this tree in pre-allocated array
+            signs_stack[m] = signs
 
-    assert signs_stack is not None
-    # Ensure signs_stack is 2D for majority_voting
-    if signs_stack.ndim == 1:
-        signs_stack = signs_stack.reshape(1, -1)
+    # signs_stack is already 2D with shape (num_trees, 2**num_qubits)
     return majority_voting(signs_stack)
 
