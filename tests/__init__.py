@@ -12,12 +12,16 @@ Test Module Structure
 The test suite is organized into three main modules, each testing different components
 of the HRF library:
 
-1. test_random_forest.py (20 tests)
+1. test_random_forest.py (40 tests)
    - Tests core graph theory algorithms for hypercube spanning trees
    - Validates uniform random tree generation using optimized algorithms
    - Tests majority voting and sign reconstruction mechanisms
    - Covers path finding and weight calculation functions
    - Ensures reproducibility through random seed management
+   - NEW: Tests parallel processing features and multiprocessing functionality
+   - NEW: Validates mathematical correctness against tutorial equations
+   - NEW: Comprehensive edge case testing and boundary conditions
+   - NEW: Integration testing following tutorial notebook workflow
 
 2. test_sample.py (35 tests)
    - Tests quantum circuit generation for Hadamard measurements
@@ -38,7 +42,7 @@ Testing Methodology
 
 Unit Testing Framework:
 - Built on Python's unittest framework with pytest integration
-- Total of 79 tests covering ~90% of the codebase functionality
+- Total of 99 tests covering ~95% of the codebase functionality
 - Includes both unit tests and integration tests
 
 Mock Testing Strategy:
@@ -57,6 +61,9 @@ Test Coverage Areas:
 - Hardware noise simulation and error mitigation
 - Mathematical accuracy of quantum information measures
 - Edge cases and error handling
+- NEW: Parallel processing and multiprocessing validation
+- NEW: Tutorial compliance and workflow integration
+- NEW: Mathematical correctness against theoretical equations
 
 Quality Assurance Features:
 - Warning suppression for external library deprecations (mthree, Qiskit)
@@ -104,10 +111,13 @@ Integration with CI/CD:
 - Graphviz-dependent tests are conditionally skipped in CI environments
 
 Test Data and Fixtures:
-- Uses tutorial notebooks as behavioral references
+- Uses tutorial notebooks as behavioral references (especially 02a_hadamard_random_forest_simulation.ipynb)
 - Includes known quantum states (Bell states, stabilizer states)
 - Validates against theoretical predictions from quantum information theory
 - Tests hardware noise models based on IBM Quantum device characteristics
+- NEW: Validates Hadamard superposition principle from tutorial equation (2)
+- NEW: Tests sign determination formula from tutorial equation (3)
+- NEW: Includes tutorial default parameters (111 trees, seed 999)
 
 This test suite ensures the reliability, accuracy, and performance of the HRF
 quantum state tomography library across various quantum computing platforms

@@ -266,6 +266,28 @@ class TestQuantumMagic(unittest.TestCase):
         psi = Statevector(qc)
         SE = stabilizer_entropy(alpha, psi)
         self.assertAlmostEqual(SE, 0.0, places=10)
+        
+    def test_stabilizer_entropy_numpy_array_input(self):
+        """Test stabilizer entropy with numpy array input."""
+        alpha = 2
+        
+        # Test |0⟩ state as numpy array
+        psi_array = np.array([1.0, 0.0], dtype=complex)
+        SE_array = stabilizer_entropy(alpha, psi_array)
+        
+        # Test same state as Statevector
+        qc = QuantumCircuit(1)
+        psi_statevector = Statevector(qc)
+        SE_statevector = stabilizer_entropy(alpha, psi_statevector)
+        
+        # Results should be identical
+        self.assertAlmostEqual(SE_array, SE_statevector, places=10)
+        self.assertAlmostEqual(SE_array, 0.0, places=10)
+        
+        # Test Bell state as numpy array
+        bell_array = np.array([1/np.sqrt(2), 0, 0, 1/np.sqrt(2)], dtype=complex)
+        SE_bell = stabilizer_entropy(alpha, bell_array)
+        self.assertAlmostEqual(SE_bell, 0.0, places=10)  # Bell state is stabilizer
 
 
 class TestSwapTest(unittest.TestCase):

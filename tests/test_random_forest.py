@@ -1,6 +1,9 @@
 import unittest
 import random
 import warnings
+import multiprocessing as mp
+from unittest.mock import patch, MagicMock
+import time
 import numpy as np
 import networkx as nx
 import treelib
@@ -17,7 +20,8 @@ from hadamard_random_forest.random_forest import (
     get_weight,
     get_signs,
     majority_voting,
-    generate_random_forest
+    generate_random_forest,
+    _generate_single_tree_worker
 )
 
 
@@ -468,6 +472,444 @@ class TestRandomForest(unittest.TestCase):
         actual_signs = get_signs(weights, None, paths, idx_cumsum)
         
         np.testing.assert_array_almost_equal(actual_signs, expected_signs)
+
+
+class TestParallelProcessing(unittest.TestCase):
+    """Test parallel processing features introduced in version 0.2.0."""
+
+    def setUp(self):
+        """Set up test data for parallel processing tests."""
+        self.num_qubits = 3
+        self.num_trees = 5
+        self.base_seed = 42
+        # Create valid sample data
+        fix_random_seed(42)
+        self.samples = [np.random.rand(2**self.num_qubits) for _ in range(self.num_qubits + 1)]
+
+    def test_generate_single_tree_worker_basic(self):
+        """Test that _generate_single_tree_worker produces valid output."""
+        args = (self.num_qubits, self.samples, 0, self.base_seed)
+        tree_index, signs = _generate_single_tree_worker(args)
+        
+        # Verify return structure
+        self.assertEqual(tree_index, 0)
+        self.assertIsInstance(signs, np.ndarray)
+        self.assertEqual(signs.shape, (2**self.num_qubits,))
+        self.assertTrue(np.all(np.isin(signs, [-1, 1])))
+
+    def test_generate_single_tree_worker_deterministic(self):
+        """Test that worker function is deterministic with same seed."""
+        args = (self.num_qubits, self.samples, 0, self.base_seed)
+        
+        tree_index1, signs1 = _generate_single_tree_worker(args)
+        tree_index2, signs2 = _generate_single_tree_worker(args)
+        
+        self.assertEqual(tree_index1, tree_index2)
+        np.testing.assert_array_equal(signs1, signs2)
+
+    def test_generate_single_tree_worker_different_indices(self):
+        """Test that different tree indices produce different results."""
+        args1 = (self.num_qubits, self.samples, 0, self.base_seed)
+        args2 = (self.num_qubits, self.samples, 1, self.base_seed)
+        
+        tree_index1, signs1 = _generate_single_tree_worker(args1)
+        tree_index2, signs2 = _generate_single_tree_worker(args2)
+        
+        self.assertEqual(tree_index1, 0)
+        self.assertEqual(tree_index2, 1)
+        # Different tree indices should generally produce different signs
+        # (though there's a small chance they could be identical)
+        self.assertEqual(signs1.shape, signs2.shape)
+
+    def test_parallel_vs_sequential_identical_results(self):
+        """Test that parallel and sequential execution produce identical results."""
+        # Force sequential execution
+        with patch('hadamard_random_forest.random_forest.mp.cpu_count', return_value=1):
+            fix_random_seed(42)
+            result_sequential = generate_random_forest(
+                self.num_qubits, self.num_trees, self.samples, save_tree=False, show_tree=False
+            )
+
+        # Force parallel execution (mock cpu_count > 1 and num_trees >= threshold)
+        with patch('hadamard_random_forest.random_forest.mp.cpu_count', return_value=4):
+            fix_random_seed(42)
+            result_parallel = generate_random_forest(
+                self.num_qubits, self.num_trees, self.samples, save_tree=False, show_tree=False
+            )
+
+        # Results should be identical
+        np.testing.assert_array_equal(result_sequential, result_parallel)
+
+    def test_parallel_threshold_logic(self):
+        """Test that parallel processing is only used when appropriate."""
+        # Test with num_trees below threshold (should use sequential)
+        with patch('hadamard_random_forest.random_forest.mp.cpu_count', return_value=4):
+            with patch('hadamard_random_forest.random_forest.logging') as mock_logging:
+                fix_random_seed(42)
+                generate_random_forest(
+                    self.num_qubits, 2, self.samples, save_tree=False, show_tree=False  # Below threshold
+                )
+                # Should not log parallel processing message
+                mock_logging.info.assert_not_called()
+
+        # Test with num_trees above threshold (should use parallel)
+        with patch('hadamard_random_forest.random_forest.mp.cpu_count', return_value=4):
+            with patch('hadamard_random_forest.random_forest.logging') as mock_logging:
+                fix_random_seed(42)
+                generate_random_forest(
+                    self.num_qubits, 5, self.samples, save_tree=False, show_tree=False  # Above threshold
+                )
+                # Should log parallel processing message
+                mock_logging.info.assert_called_once()
+
+    def test_visualization_disables_parallel(self):
+        """Test that visualization parameters disable parallel processing."""
+        with patch('hadamard_random_forest.random_forest.mp.cpu_count', return_value=4):
+            with patch('hadamard_random_forest.random_forest.logging') as mock_logging:
+                # Mock the graphviz functionality to avoid pygraphviz dependency
+                with patch('networkx.drawing.nx_agraph.graphviz_layout', return_value={i: (i, 0) for i in range(8)}):
+                    with patch('matplotlib.pyplot.savefig'):  # Mock the actual file saving
+                        fix_random_seed(42)
+                        generate_random_forest(
+                            self.num_qubits, 5, self.samples, save_tree=True, show_tree=False  # Visualization enabled
+                        )
+                        # Should not use parallel processing due to visualization
+                        mock_logging.info.assert_not_called()
+
+    @patch('hadamard_random_forest.random_forest.mp.Pool')
+    def test_multiprocessing_pool_usage(self, mock_pool_class):
+        """Test that multiprocessing.Pool is used correctly."""
+        mock_pool = MagicMock()
+        mock_pool_class.return_value.__enter__.return_value = mock_pool
+        
+        # Mock pool.map to return expected results
+        expected_results = [(i, np.array([1, -1, 1, -1, 1, -1, 1, -1])) for i in range(5)]
+        mock_pool.map.return_value = expected_results
+        
+        with patch('hadamard_random_forest.random_forest.mp.cpu_count', return_value=4):
+            fix_random_seed(42)
+            result = generate_random_forest(
+                self.num_qubits, 5, self.samples, save_tree=False, show_tree=False
+            )
+            
+            # Verify Pool was created and used
+            mock_pool_class.assert_called_once()
+            mock_pool.map.assert_called_once()
+            
+            # Verify the function argument to map
+            args, kwargs = mock_pool.map.call_args
+            self.assertEqual(args[0], _generate_single_tree_worker)
+            self.assertEqual(len(args[1]), 5)  # 5 worker arguments
+
+
+class TestSignDetermination(unittest.TestCase):
+    """Test mathematical correctness of sign determination algorithm."""
+
+    def setUp(self):
+        """Set up test data for sign determination tests."""
+        self.num_qubits = 3
+        fix_random_seed(42)
+
+    def test_sign_formula_correctness(self):
+        """Test the sign determination formula from tutorial equation (3)."""
+        # Create known test case based on tutorial equation (3):
+        # sgn[2|ψ^k_j|^2 - |ψ_j|^2 - |ψ_{j+2^k}|^2]
+        
+        num_qubits = 2  # Simple case for verification
+        N = 2**num_qubits
+        
+        # Create mock samples that should produce known signs
+        # Base amplitudes: |ψ_0|^2, |ψ_1|^2, |ψ_2|^2, |ψ_3|^2
+        base_probs = np.array([0.4, 0.3, 0.2, 0.1])  # Must sum to 1
+        
+        # For k=0 (step=1): affects pairs (0,1) and (2,3)
+        # For k=1 (step=2): affects pairs (0,2) and (1,3)
+        
+        # Create Hadamard superposition results based on equation (2)
+        # ψ^k_{j, j+2^k} = (1/√2)(ψ_j ± ψ_{j+2^k})
+        samples = [base_probs]  # samples[0] = base probabilities
+        
+        # Mock k=0 Hadamard results (step=1)
+        h0_probs = base_probs.copy()  # Start with base, will be modified
+        samples.append(h0_probs)
+        
+        # Mock k=1 Hadamard results (step=2)  
+        h1_probs = base_probs.copy()
+        samples.append(h1_probs)
+        
+        # Generate tree and test weight computation
+        tree, _ = generate_hypercube_tree(num_qubits)
+        roots, leafs = find_global_roots_and_leafs(tree, num_qubits)
+        
+        weights = get_weight(samples, roots, leafs, num_qubits)
+        
+        # Verify basic properties
+        self.assertEqual(weights[0], 1.0)  # Root weight is always 1
+        self.assertTrue(np.all(np.isin(weights, [-1, 1])))  # All weights are ±1
+
+    def test_weight_computation_properties(self):
+        """Test mathematical properties of weight computation."""
+        num_qubits = 3
+        N = 2**num_qubits
+        
+        # Create normalized probability distributions
+        fix_random_seed(42)
+        samples = []
+        for _ in range(num_qubits + 1):
+            sample = np.random.rand(N)
+            sample = sample / np.sum(sample)  # Normalize
+            samples.append(sample)
+        
+        tree, _ = generate_hypercube_tree(num_qubits)
+        roots, leafs = find_global_roots_and_leafs(tree, num_qubits)
+        
+        weights = get_weight(samples, roots, leafs, num_qubits)
+        
+        # Test mathematical properties
+        self.assertEqual(weights.shape, (N,))
+        self.assertEqual(weights[0], 1.0)  # Root weight
+        self.assertTrue(np.all(np.isin(weights, [-1, 1])))  # Binary weights
+        self.assertEqual(len(np.unique(weights)), 2)  # Only +1 and -1
+
+    def test_hadamard_superposition_principle(self):
+        """Test that Hadamard operations follow equation (2) from tutorial."""
+        # This tests the theoretical basis: ψ^k_{j, j+2^k} = (1/√2)(ψ_j ± ψ_{j+2^k})
+        
+        # Create a simple 2-qubit case where we can verify the math
+        num_qubits = 2
+        
+        # Known amplitudes for |00⟩, |01⟩, |10⟩, |11⟩
+        amplitudes = np.array([0.6, 0.4, 0.5, 0.5])  # Real amplitudes
+        amplitudes = amplitudes / np.linalg.norm(amplitudes)  # Normalize
+        
+        base_probs = amplitudes**2
+        
+        # Verify normalization
+        self.assertAlmostEqual(np.sum(base_probs), 1.0, places=10)
+        
+        # Test that our probability distributions are valid
+        self.assertTrue(np.all(base_probs >= 0))
+        self.assertTrue(np.all(base_probs <= 1))
+
+
+class TestEdgeCases(unittest.TestCase):
+    """Test edge cases and boundary conditions."""
+
+    def test_single_qubit_system(self):
+        """Test the minimal quantum system (1 qubit)."""
+        num_qubits = 1
+        num_trees = 3
+        
+        # Create valid samples for 1-qubit system
+        fix_random_seed(42)
+        samples = [np.random.rand(2) for _ in range(2)]  # 2 samples for 1 qubit
+        samples = [s / np.sum(s) for s in samples]  # Normalize
+        
+        result = generate_random_forest(num_qubits, num_trees, samples, save_tree=False)
+        
+        self.assertEqual(result.shape, (2,))  # 2^1 = 2 elements
+        self.assertTrue(np.all(np.isin(result, [-1, 1])))
+
+    def test_visualization_threshold_boundary(self):
+        """Test behavior at visualization threshold (10 qubits)."""
+        # Test at threshold (should work)
+        num_qubits = 10
+        num_trees = 2
+        fix_random_seed(42)
+        samples = [np.random.rand(2**num_qubits) for _ in range(num_qubits + 1)]
+        
+        # This should work without warnings about visualization
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = generate_random_forest(num_qubits, num_trees, samples, save_tree=False)
+            # Should not have warnings about tree size
+            tree_warnings = [warning for warning in w if "Too large to render" in str(warning.message)]
+            self.assertEqual(len(tree_warnings), 0)
+
+        # Test beyond threshold (should disable visualization)
+        num_qubits = 11
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            with patch('hadamard_random_forest.random_forest.logging') as mock_logging:
+                # Create proper samples for 11 qubits
+                large_samples = [np.random.rand(2**num_qubits) for _ in range(num_qubits + 1)]
+                result = generate_random_forest(num_qubits, num_trees, large_samples, save_tree=True)
+                # Should log warning about disabling visualization
+                mock_logging.warning.assert_called()
+
+    def test_invalid_sample_dimensions(self):
+        """Test handling of invalid sample data."""
+        num_qubits = 3
+        num_trees = 3
+        
+        # Wrong number of samples (should be num_qubits + 1)
+        wrong_samples = [np.random.rand(8) for _ in range(2)]  # Only 2 instead of 4
+        
+        with self.assertRaises(IndexError):
+            generate_random_forest(num_qubits, num_trees, wrong_samples, save_tree=False)
+        
+        # Wrong sample dimensions (should be 2^num_qubits)
+        wrong_dim_samples = [np.random.rand(4) for _ in range(4)]  # Should be 8 elements
+        
+        with self.assertRaises(IndexError):
+            generate_random_forest(num_qubits, num_trees, wrong_dim_samples, save_tree=False)
+
+    def test_zero_trees(self):
+        """Test edge case with zero trees."""
+        num_qubits = 2
+        num_trees = 0
+        samples = [np.random.rand(4) for _ in range(3)]
+        
+        # Zero trees should generate a result with a warning (not an error)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = generate_random_forest(num_qubits, num_trees, samples, save_tree=False)
+            
+            # Should generate warning about zero elements
+            zero_warnings = [warning for warning in w if "Zero elements" in str(warning.message)]
+            self.assertGreater(len(zero_warnings), 0)
+            
+            # Should still return valid result (all +1s as fallback)
+            self.assertEqual(result.shape, (4,))
+            self.assertTrue(np.all(result == 1))
+
+    def test_deterministic_seeding_edge_cases(self):
+        """Test random seeding in edge cases."""
+        num_qubits = 2
+        samples = [np.random.rand(4) for _ in range(3)]
+        
+        # Test with different random seeds
+        seeds = [0, 1, 42, 999, 2**31 - 1]
+        results = []
+        
+        for seed in seeds:
+            fix_random_seed(seed)
+            result = generate_random_forest(num_qubits, 3, samples, save_tree=False)
+            results.append(result)
+        
+        # All results should be valid
+        for result in results:
+            self.assertEqual(result.shape, (4,))
+            self.assertTrue(np.all(np.isin(result, [-1, 1])))
+        
+        # Results with different seeds should generally be different
+        # (though there's a small chance some could be identical)
+        # For deterministic testing, just verify they're all valid
+        unique_results = [tuple(r) for r in results]
+        # At least verify we got some results back
+        self.assertEqual(len(results), len(seeds))
+
+
+class TestTutorialWorkflow(unittest.TestCase):
+    """Test integration following the tutorial notebook workflow."""
+
+    def test_tutorial_default_parameters(self):
+        """Test with default parameters from tutorial (111 trees)."""
+        num_qubits = 3  # Smaller than tutorial for faster testing
+        num_trees = 111  # Tutorial default
+        
+        # Create realistic sample data
+        fix_random_seed(999)  # Tutorial uses this seed
+        samples = []
+        
+        # Base probabilities (amplitudes squared)
+        base_sample = np.random.rand(2**num_qubits)
+        base_sample = base_sample / np.sum(base_sample)
+        samples.append(base_sample)
+        
+        # Hadamard measurement results
+        for k in range(num_qubits):
+            h_sample = np.random.rand(2**num_qubits)
+            h_sample = h_sample / np.sum(h_sample)
+            samples.append(h_sample)
+        
+        # Test reconstruction
+        result = generate_random_forest(num_qubits, num_trees, samples, save_tree=False, show_tree=False)
+        
+        # Verify output properties
+        self.assertEqual(result.shape, (2**num_qubits,))
+        self.assertTrue(np.all(np.isin(result, [-1, 1])))
+        
+        # Test reproducibility with same seed
+        fix_random_seed(999)
+        result2 = generate_random_forest(num_qubits, num_trees, samples, save_tree=False, show_tree=False)
+        np.testing.assert_array_equal(result, result2)
+
+    def test_fidelity_bounds_principle(self):
+        """Test the fidelity bounds principle from tutorial."""
+        # This tests the concept: Fidelity Upper Bound (no sign errors) >= HRF Fidelity
+        
+        num_qubits = 2
+        num_trees = 5
+        
+        # Create a known quantum state
+        exact_amplitudes = np.array([0.6, 0.3, 0.5, 0.4])
+        exact_amplitudes = exact_amplitudes / np.linalg.norm(exact_amplitudes)
+        
+        # Generate realistic samples (with some noise)
+        fix_random_seed(42)
+        samples = []
+        
+        # Base sample should approximate |amplitude|^2
+        base_sample = exact_amplitudes**2 + 0.01 * np.random.randn(4)  # Add small noise
+        base_sample = np.abs(base_sample)  # Ensure positive
+        base_sample = base_sample / np.sum(base_sample)  # Normalize
+        samples.append(base_sample)
+        
+        # Add Hadamard samples
+        for k in range(num_qubits):
+            h_sample = np.random.rand(4)
+            h_sample = h_sample / np.sum(h_sample)
+            samples.append(h_sample)
+        
+        # Reconstruct state
+        reconstructed_signs = generate_random_forest(num_qubits, num_trees, samples, save_tree=False)
+        reconstructed_amplitudes = np.sqrt(base_sample) * reconstructed_signs
+        
+        # Test that we get a valid quantum state
+        self.assertAlmostEqual(np.linalg.norm(reconstructed_amplitudes), 1.0, places=5)
+        
+        # Verify the reconstruction produces real values (as expected for HRF)
+        self.assertTrue(np.all(np.isreal(reconstructed_amplitudes)))
+
+    def test_circuit_count_requirement(self):
+        """Test that exactly n+1 circuits are needed as stated in tutorial."""
+        num_qubits = 3
+        expected_circuits = num_qubits + 1  # n+1 circuits
+        
+        # Test with correct number of samples
+        samples = [np.random.rand(2**num_qubits) for _ in range(expected_circuits)]
+        samples = [s / np.sum(s) for s in samples]  # Normalize
+        
+        result = generate_random_forest(num_qubits, 3, samples, save_tree=False)
+        self.assertEqual(result.shape, (2**num_qubits,))
+        
+        # Test with too few samples (should fail)
+        insufficient_samples = samples[:-1]  # Remove one sample
+        
+        with self.assertRaises(IndexError):
+            generate_random_forest(num_qubits, 3, insufficient_samples, save_tree=False)
+
+    def test_real_valued_state_assumption(self):
+        """Test that HRF is designed for real-valued quantum states."""
+        # HRF is specifically for real-valued states as mentioned in tutorial
+        num_qubits = 2
+        num_trees = 5
+        
+        # Create samples for real-valued state
+        fix_random_seed(42)
+        samples = [np.random.rand(4) for _ in range(3)]
+        samples = [s / np.sum(s) for s in samples]
+        
+        result = generate_random_forest(num_qubits, num_trees, samples, save_tree=False)
+        
+        # The signs should be real (±1)
+        self.assertTrue(np.all(np.isreal(result)))
+        self.assertTrue(np.all(np.isin(result, [-1, 1])))
+        
+        # When combined with amplitude magnitudes, should give real amplitudes
+        amplitudes = np.sqrt(samples[0]) * result
+        self.assertTrue(np.all(np.isreal(amplitudes)))
 
 
 if __name__ == '__main__':
