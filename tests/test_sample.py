@@ -22,7 +22,7 @@ from hadamard_random_forest.random_forest import fix_random_seed
 class TestSample(unittest.TestCase):
 
     def setUp(self):
-        """Set up test fixtures and common test data."""
+        """Set up test setting and common test data."""
         self.backend_sim = AerSimulator()
         self.fake_backend = FakeFez()
         

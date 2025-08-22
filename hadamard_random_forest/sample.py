@@ -215,7 +215,11 @@ def get_samples_hardware(
     # Submit jobs and collect raw counts
     for idx, circ in enumerate(circuits):
         # Measurement mitigation setup
-        mapping = mthree_utils.final_measurement_mapping(circ)
+        # Suppress mthree deprecation warnings from external library
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=DeprecationWarning, module="mthree.utils")
+            mapping = mthree_utils.final_measurement_mapping(circ)
         key = str(mapping)
         if error_mitigation and key not in mapping_mit:
             # print("=========== New M3 calibration detected ===========")
@@ -246,7 +250,12 @@ def get_samples_hardware(
     for (counts, key), raw in zip(results, raw_samples):
         if error_mitigation:
             mit = mapping_mit[key]
-            quasi = mit.apply_correction(counts, mthree_utils.final_measurement_mapping(circuits[0]))
+            # Suppress mthree deprecation warnings from external library
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=DeprecationWarning, module="mthree.utils")
+                circuit_mapping = mthree_utils.final_measurement_mapping(circuits[0])
+            quasi = mit.apply_correction(counts, circuit_mapping)
             probs = quasi.nearest_probability_distribution()
             vec = np.zeros(2**num_qubits, dtype=float)
             for bitstr, p in probs.items():
@@ -297,6 +306,15 @@ def get_statevector(
 
     # Normalization
     statevector = amplitudes * signs
-    statevector = statevector/np.linalg.norm(statevector)
+    norm = np.linalg.norm(statevector)
+    if norm > 0:
+        statevector = statevector / norm
+    else:
+        # Handle zero norm case - return normalized zero vector
+        import warnings
+        warnings.warn("Statevector has zero norm; returning normalized zero vector.", UserWarning)
+        statevector = np.zeros_like(statevector)
+        if len(statevector) > 0:
+            statevector[0] = 1.0  # Set first element to 1 for valid quantum state
 
     return statevector
