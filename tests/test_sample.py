@@ -255,14 +255,14 @@ class TestSample(unittest.TestCase):
         num_qubits = 3
         base_circuit = self.simple_circuits[num_qubits]
         circuits = get_circuits(num_qubits, base_circuit)
-        
+
         # Test with different parameter values
         param_sets = [
             np.zeros(base_circuit.num_parameters),
             np.ones(base_circuit.num_parameters) * 0.5,
             np.random.rand(base_circuit.num_parameters) * 2 * np.pi
         ]
-        
+
         for i, parameters in enumerate(param_sets):
             with self.subTest(param_set=i):
                 samples = get_samples_noisy(
@@ -273,11 +273,64 @@ class TestSample(unittest.TestCase):
                     backend_sim=self.backend_sim,
                     error_mitigation=False
                 )
-                
+
                 # Different parameters should generally produce different results
                 self.assertEqual(len(samples), num_qubits + 1)
                 for sample in samples:
                     self.assertTrue(np.isfinite(sample).all())
+
+    @patch('hadamard_random_forest.sample.M3Mitigation')
+    @patch('hadamard_random_forest.sample.mthree_utils.final_measurement_mapping')
+    def test_get_samples_noisy_prebound_with_mitigation(self, mock_mapping, mock_m3):
+        """Test get_samples_noisy with pre-bound circuits AND error mitigation."""
+        num_qubits = 2
+        base_circuit = self.simple_circuits[num_qubits]
+
+        # Bind parameters to the circuit first
+        parameters = np.random.rand(base_circuit.num_parameters) * 2 * np.pi
+        bound_circuit = base_circuit.assign_parameters(parameters)
+        circuits = get_circuits(num_qubits, bound_circuit)
+
+        # Mock M3 mitigation
+        mock_mit_instance = MagicMock()
+        mock_m3.return_value = mock_mit_instance
+        mock_mapping.return_value = [0, 1]
+
+        mock_quasi = MagicMock()
+        mock_quasi.nearest_probability_distribution.return_value = {
+            '00': 0.25, '01': 0.25, '10': 0.25, '11': 0.25
+        }
+        mock_mit_instance.apply_correction.return_value = mock_quasi
+
+        # Mock the backend
+        mock_job = MagicMock()
+        mock_result = MagicMock()
+        mock_job.result.return_value = mock_result
+        mock_result.get_counts.return_value = self._create_mock_counts(num_qubits, 1024)
+
+        with patch.object(self.backend_sim, 'run', return_value=mock_job):
+            # Call with None parameters since circuit is pre-bound
+            samples = get_samples_noisy(
+                num_qubits=num_qubits,
+                circuits=circuits,
+                shots=1024,
+                parameters=None,
+                backend_sim=self.backend_sim,
+                error_mitigation=True
+            )
+
+        # Verify mitigation was applied
+        self.assertTrue(mock_m3.called)
+        self.assertTrue(mock_mit_instance.apply_correction.called)
+
+        # Verify output structure
+        self.assertIsInstance(samples, list)
+        self.assertEqual(len(samples), num_qubits + 1)
+
+        for sample in samples:
+            self.assertIsInstance(sample, np.ndarray)
+            self.assertEqual(sample.shape, (2**num_qubits,))
+            self.assertTrue(np.all(sample >= 0))
 
     def test_get_circuits_hardware_basic(self):
         """Test basic functionality of get_circuits_hardware."""
@@ -774,23 +827,74 @@ class TestSampleErrorHandling(unittest.TestCase):
         """Test get_statevector with empty or null samples."""
         num_qubits = 2
         num_trees = 3
-        
+
         # Test with empty list
         with self.assertRaises(Exception):
             get_statevector(num_qubits, num_trees, [], save_tree=False)
-        
-        # Test with samples containing zeros
+
+        # Test with samples containing zeros - should raise ValueError for zero norm
         zero_samples = [np.zeros(4) for _ in range(3)]
-        
+
+        with self.assertRaises(ValueError) as context:
+            get_statevector(num_qubits, num_trees, zero_samples, save_tree=False)
+
+        # Verify error message is informative
+        self.assertIn("zero norm", str(context.exception).lower())
+        self.assertIn("reconstruction failed", str(context.exception).lower())
+
+    def test_get_statevector_zero_norm_raises_error(self):
+        """Test that get_statevector raises ValueError for zero-norm statevectors."""
+        num_qubits = 2
+        num_trees = 5
+
+        # Create samples that will result in zero statevector
+        # All zeros in base sample
+        zero_base = np.zeros(2**num_qubits)
+        other_samples = [np.random.rand(2**num_qubits) for _ in range(num_qubits)]
+        samples = [zero_base] + other_samples
+
+        with self.assertRaises(ValueError) as context:
+            get_statevector(num_qubits, num_trees, samples, save_tree=False)
+
+        # Verify the error message contains helpful information
+        error_msg = str(context.exception)
+        self.assertIn("zero norm", error_msg.lower())
+        self.assertIn("reconstruction failed", error_msg.lower())
+        self.assertIn("sample", error_msg.lower())
+
+    def test_get_statevector_near_zero_norm_threshold(self):
+        """Test statevector reconstruction near the zero-norm threshold (1e-12)."""
+        num_qubits = 2
+        num_trees = 3
+
+        # Create samples with very small but non-zero values (above threshold)
+        small_value = 1e-10
+        base_sample = np.ones(2**num_qubits) * small_value
+        base_sample = base_sample / np.sum(base_sample)
+
+        other_samples = [np.random.rand(2**num_qubits) for _ in range(num_qubits)]
+        other_samples = [s / np.sum(s) for s in other_samples]
+        samples = [base_sample] + other_samples
+
+        # Should succeed since norm will be > 1e-12 after sqrt and majority voting
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             try:
-                result = get_statevector(num_qubits, num_trees, zero_samples, save_tree=False)
-                # Should either work or raise an exception, but not crash
-                self.assertIsInstance(result, np.ndarray)
-            except Exception:
-                # Zero samples might legitimately cause errors
+                statevector = get_statevector(num_qubits, num_trees, samples, save_tree=False)
+                self.assertIsInstance(statevector, np.ndarray)
+                self.assertAlmostEqual(np.linalg.norm(statevector), 1.0, places=6)
+            except ValueError:
                 pass
+
+        # Create samples that will be below threshold - use all zeros for guaranteed zero norm
+        zero_sample = np.zeros(2**num_qubits)
+        zero_samples = [zero_sample] + [np.random.rand(2**num_qubits) for _ in range(num_qubits)]
+
+        # Should raise ValueError for effectively zero norm
+        with self.assertRaises(ValueError) as context:
+            get_statevector(num_qubits, num_trees, zero_samples, save_tree=False)
+
+        self.assertIn("zero norm", str(context.exception).lower())
 
     def test_get_circuits_hardware_invalid_backend(self):
         """Test get_circuits_hardware with invalid backend."""
@@ -878,12 +982,125 @@ class TestSampleErrorHandling(unittest.TestCase):
         self.assertEqual(len(minimal_circuits), 2)  # Base + 1 H variant
 
 
+class TestWarningSuppressionAndEdgeCases(unittest.TestCase):
+    """Tests for warning suppression and edge case handling."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.backend_sim = AerSimulator()
+        self.fake_backend = FakeFez()
+
+    def test_mthree_warning_suppression_decorator(self):
+        """Test that _suppress_mthree_warnings decorator works correctly."""
+        from hadamard_random_forest.sample import _suppress_mthree_warnings
+
+        # Create a function that would generate a deprecation warning
+        @_suppress_mthree_warnings
+        def test_func():
+            import warnings
+            warnings.warn("Test mthree warning", DeprecationWarning)
+            return "success"
+
+        # Should not raise or print warning
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = test_func()
+            self.assertEqual(result, "success")
+
+    def test_safe_final_measurement_mapping(self):
+        """Test _safe_final_measurement_mapping suppresses mthree warnings."""
+        from hadamard_random_forest.sample import _safe_final_measurement_mapping
+        from qiskit import QuantumCircuit
+
+        # Create a simple circuit
+        qc = QuantumCircuit(2)
+        qc.h(0)
+        qc.cx(0, 1)
+        qc.measure_all()
+
+        # Should not generate warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            mapping = _safe_final_measurement_mapping(qc)
+
+            # Check that no DeprecationWarnings from mthree.utils were recorded
+            mthree_warnings = [warning for warning in w
+                             if issubclass(warning.category, DeprecationWarning)
+                             and 'mthree' in str(warning.filename).lower()]
+            self.assertEqual(len(mthree_warnings), 0)
+
+        # Verify mapping is valid (can be list or dict depending on mthree version)
+        self.assertIsNotNone(mapping)
+
+    def test_parameter_none_vs_not_provided(self):
+        """Test explicit None vs not providing parameters argument."""
+        num_qubits = 2
+        base_circuit = real_amplitudes(num_qubits)
+        parameters = np.random.rand(base_circuit.num_parameters)
+        bound_circuit = base_circuit.assign_parameters(parameters)
+        circuits = get_circuits(num_qubits, bound_circuit)
+
+        # Explicit None
+        samples1 = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=circuits,
+            shots=1024,
+            parameters=None,
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+
+        # Not providing parameters (uses default None)
+        samples2 = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=circuits,
+            shots=1024,
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+
+        # Both should succeed
+        self.assertEqual(len(samples1), num_qubits + 1)
+        self.assertEqual(len(samples2), num_qubits + 1)
+
+    def test_parameter_shape_validation(self):
+        """Test various parameter shapes and types."""
+        num_qubits = 2
+        base_circuit = real_amplitudes(num_qubits)
+        circuits = get_circuits(num_qubits, base_circuit)
+
+        # Valid 1D numpy array
+        params_valid = np.random.rand(base_circuit.num_parameters)
+        samples_valid = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=circuits,
+            shots=512,
+            parameters=params_valid,
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+        self.assertEqual(len(samples_valid), num_qubits + 1)
+
+        # Python list (should also work)
+        params_list = params_valid.tolist()
+        samples_list = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=circuits,
+            shots=512,
+            parameters=params_list,
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+        self.assertEqual(len(samples_list), num_qubits + 1)
+
+
 class TestSampleIntegration(unittest.TestCase):
     """Integration tests for the sample module."""
 
     def setUp(self):
         """Set up test fixtures."""
         self.backend_sim = AerSimulator()
+        self.fake_backend = FakeFez()
 
     def test_integration_basic_workflow(self):
         """Test the complete basic workflow integration."""
@@ -1068,35 +1285,408 @@ class TestSampleIntegration(unittest.TestCase):
         """Test that memory usage is reasonable for moderate system sizes."""
         import psutil
         import os
-        
+
         process = psutil.Process(os.getpid())
         initial_memory = process.memory_info().rss / 1024 / 1024  # MB
-        
+
         # Test with moderate system size
         num_qubits = 4
         num_trees = 5
         base_circuit = real_amplitudes(num_qubits, reps=2)
         parameters = np.random.rand(base_circuit.num_parameters)
-        
+
         circuits = get_circuits(num_qubits, base_circuit)
         samples = get_samples_noisy(
             num_qubits, circuits, 1024, parameters,
             self.backend_sim, error_mitigation=False
         )
-        
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             statevector = get_statevector(num_qubits, num_trees, samples, save_tree=False)
-        
+
         final_memory = process.memory_info().rss / 1024 / 1024  # MB
         memory_increase = final_memory - initial_memory
-        
+
         # Memory increase should be reasonable (less than 500MB for 4 qubits)
         self.assertLess(memory_increase, 500.0)
-        
+
         # Result should still be valid
         self.assertEqual(statevector.shape, (2**num_qubits,))
         self.assertTrue(np.all(np.isfinite(statevector)))
+
+    def test_integration_prebound_vs_parameterized_equivalence(self):
+        """Test that pre-bound and parameterized workflows produce equivalent results."""
+        num_qubits = 3
+        num_trees = 7
+        shots = 2048
+
+        # Create a parameterized circuit
+        base_circuit = real_amplitudes(num_qubits, reps=1)
+        parameters = np.random.rand(base_circuit.num_parameters) * 2 * np.pi
+
+        # Fix random seed for reproducibility
+        fix_random_seed(12345)
+
+        # Workflow 1: Traditional parameterized approach
+        circuits_param = get_circuits(num_qubits, base_circuit)
+        samples_param = get_samples_noisy(
+            num_qubits, circuits_param, shots, parameters,
+            self.backend_sim, error_mitigation=False
+        )
+
+        fix_random_seed(12345)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            statevector_param = get_statevector(num_qubits, num_trees, samples_param, save_tree=False)
+
+        # Workflow 2: Pre-bound approach
+        bound_circuit = base_circuit.assign_parameters(parameters)
+        circuits_bound = get_circuits(num_qubits, bound_circuit)
+
+        fix_random_seed(12345)
+        samples_bound = get_samples_noisy(
+            num_qubits, circuits_bound, shots, None,
+            self.backend_sim, error_mitigation=False
+        )
+
+        fix_random_seed(12345)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            statevector_bound = get_statevector(num_qubits, num_trees, samples_bound, save_tree=False)
+
+        # Both approaches should produce very similar results
+        # Due to shot noise, we expect close but not exact match
+        self.assertEqual(statevector_param.shape, statevector_bound.shape)
+
+        # Check that the statevectors are close (allowing for statistical variation)
+        # Use a generous tolerance due to shot noise
+        fidelity = np.abs(np.dot(np.conj(statevector_param), statevector_bound))**2
+        self.assertGreater(fidelity, 0.9, "Pre-bound and parameterized approaches should produce similar results")
+
+        # Both should be properly normalized
+        self.assertAlmostEqual(np.linalg.norm(statevector_param), 1.0, places=6)
+        self.assertAlmostEqual(np.linalg.norm(statevector_bound), 1.0, places=6)
+
+    def test_integration_prebound_full_workflow_with_verification(self):
+        """Test complete pre-bound workflow with result verification."""
+        num_qubits = 2
+        num_trees = 11
+        shots = 4096
+
+        # Create and bind circuit
+        base_circuit = real_amplitudes(num_qubits, reps=1)
+        parameters = np.random.rand(base_circuit.num_parameters) * np.pi
+        bound_circuit = base_circuit.assign_parameters(parameters)
+
+        # Get the exact statevector for comparison
+        from qiskit.quantum_info import Statevector
+        exact_statevector = Statevector(bound_circuit)
+
+        # Run the HRF reconstruction workflow
+        circuits = get_circuits(num_qubits, bound_circuit)
+        samples = get_samples_noisy(
+            num_qubits, circuits, shots, None,
+            self.backend_sim, error_mitigation=False
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            reconstructed = get_statevector(num_qubits, num_trees, samples, save_tree=False)
+
+        # Verify reconstruction quality
+        from qiskit.quantum_info import state_fidelity
+        fidelity = state_fidelity(reconstructed, exact_statevector)
+
+        # With enough shots and trees, fidelity should be reasonably high
+        self.assertGreater(fidelity, 0.8, f"Fidelity {fidelity} is too low")
+
+        # Verify normalization
+        self.assertAlmostEqual(np.linalg.norm(reconstructed), 1.0, places=6)
+
+        # Verify dimensions
+        self.assertEqual(len(reconstructed), 2**num_qubits)
+
+    def test_get_samples_noisy_without_parameters(self):
+        """Test get_samples_noisy with circuits that have pre-bound parameters."""
+        num_qubits = 3
+        shots = 1024
+        
+        # Create a parameterized circuit
+        base_circuit = real_amplitudes(num_qubits)
+        
+        # Bind parameters to the base circuit first
+        parameters = np.random.rand(base_circuit.num_parameters) * 2 * np.pi
+        bound_circuit = base_circuit.assign_parameters(parameters)
+        
+        # Create circuits from bound circuit
+        circuits = get_circuits(num_qubits, bound_circuit)
+        
+        # Call without parameters - should work since circuits are already bound
+        samples = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=circuits,
+            shots=shots,
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+        
+        # Verify results
+        self.assertEqual(len(samples), num_qubits + 1)
+        for sample in samples:
+            self.assertEqual(len(sample), 2**num_qubits)
+            self.assertAlmostEqual(np.sum(sample), 1.0, places=2)
+            self.assertTrue(np.all(sample >= 0))
+
+    def test_get_samples_noisy_optional_parameters(self):
+        """Test get_samples_noisy with optional parameters."""
+        num_qubits = 3
+        shots = 1024
+
+        # Test 1: Parameterized circuit with explicit parameters
+        base_circuit = real_amplitudes(num_qubits)
+        circuits = get_circuits(num_qubits, base_circuit)
+        parameters = np.random.rand(base_circuit.num_parameters) * 2 * np.pi
+        samples_with_params = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=circuits,
+            shots=shots,
+            parameters=parameters,
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+        self.assertEqual(len(samples_with_params), num_qubits + 1)
+
+        # Test 2: Pre-bound circuit with None parameters
+        bound_circuit = base_circuit.assign_parameters(parameters)
+        bound_circuits = get_circuits(num_qubits, bound_circuit)
+        samples_without_params = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=bound_circuits,
+            shots=shots,
+            parameters=None,
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+        self.assertEqual(len(samples_without_params), num_qubits + 1)
+
+        # Test 3: Pre-bound circuit can also work with backend_sim being optional
+        samples_no_params_no_backend = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=bound_circuits,
+            shots=shots,
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+        self.assertEqual(len(samples_no_params_no_backend), num_qubits + 1)
+
+
+    @patch('hadamard_random_forest.sample.Sampler')
+    def test_get_samples_hardware_without_parameters(self, mock_sampler_class):
+        """Test get_samples_hardware with pre-bound circuits."""
+        num_qubits = 2
+        
+        # Create a parameterized circuit
+        base_circuit = real_amplitudes(num_qubits)
+        
+        # Bind parameters first
+        parameters = np.random.rand(base_circuit.num_parameters) * 2 * np.pi
+        bound_circuit = base_circuit.assign_parameters(parameters)
+        circuits = [bound_circuit.copy() for _ in range(3)]
+        
+        # Mock the sampler
+        mock_sampler = MagicMock()
+        mock_sampler_class.return_value = mock_sampler
+        
+        mock_result = MagicMock()
+        mock_result.data.meas.get_counts.return_value = {'00': 500, '11': 500}
+        mock_job = MagicMock()
+        mock_job.result.return_value = [mock_result]
+        mock_job.job_id.return_value = 'test_job_123'
+        mock_job.usage_estimation = {'quantum_seconds': 1.5}
+        mock_sampler.run.return_value = mock_job
+        
+        # Run without parameters
+        result = get_samples_hardware(
+            num_qubits=num_qubits,
+            shots=1000,
+            circuits=circuits,
+            device=MagicMock(),
+            error_mitigation=False
+        )
+        
+        mitigated, raw, job_ids, qtimes = result
+        
+        # Verify results
+        self.assertEqual(len(mitigated), 3)
+        self.assertEqual(len(raw), 3)
+        self.assertEqual(len(job_ids), 3)
+        
+        # Verify sampler was called with circuits only (no parameters)
+        for call in mock_sampler.run.call_args_list:
+            # When no parameters, should be called with just the circuit
+            self.assertEqual(len(call[0][0]), 1)
+
+    @patch('hadamard_random_forest.sample.Sampler')
+    @patch('hadamard_random_forest.sample.mthree.M3Mitigation')
+    @patch('hadamard_random_forest.sample.mthree_utils.final_measurement_mapping')
+    def test_get_samples_hardware_prebound_with_mitigation(self, mock_mapping, mock_m3, mock_sampler_class):
+        """Test get_samples_hardware with pre-bound circuits AND error mitigation."""
+        num_qubits = 2
+        base_circuit = real_amplitudes(num_qubits)
+
+        # Bind parameters first
+        parameters = np.random.rand(base_circuit.num_parameters) * 2 * np.pi
+        bound_circuit = base_circuit.assign_parameters(parameters)
+
+        # Create hardware circuits from pre-bound circuit
+        circuits = get_circuits_hardware(num_qubits, bound_circuit, self.fake_backend)
+
+        # Mock sampler
+        mock_sampler = MagicMock()
+        mock_sampler_class.return_value = mock_sampler
+
+        mock_result = MagicMock()
+        mock_result.data.meas.get_counts.return_value = {'00': 500, '11': 500}
+        mock_job = MagicMock()
+        mock_job.result.return_value = [mock_result]
+        mock_job.job_id.return_value = 'test_job_prebound_mit'
+        mock_job.usage_estimation = {'quantum_seconds': 2.0}
+        mock_sampler.run.return_value = mock_job
+
+        # Mock M3 mitigation
+        mock_mit_instance = MagicMock()
+        mock_m3.return_value = mock_mit_instance
+        mock_quasi = MagicMock()
+        mock_quasi.nearest_probability_distribution.return_value = {
+            '00': 0.5, '11': 0.5
+        }
+        mock_mit_instance.apply_correction.return_value = mock_quasi
+
+        # Mock mapping
+        mock_mapping.return_value = list(range(num_qubits))
+
+        # Run without parameters (pre-bound) but WITH error mitigation
+        result = get_samples_hardware(
+            num_qubits=num_qubits,
+            shots=1000,
+            circuits=circuits,
+            parameters=None,
+            device=self.fake_backend,
+            error_mitigation=True
+        )
+
+        mitigated, raw, job_ids, qtimes = result
+
+        # Verify mitigation was used
+        self.assertTrue(mock_m3.called)
+        self.assertTrue(mock_mit_instance.apply_correction.called)
+
+        # Verify results
+        self.assertEqual(len(mitigated), num_qubits + 1)
+        self.assertEqual(len(raw), num_qubits + 1)
+        self.assertEqual(len(job_ids), num_qubits + 1)
+
+        # Verify sampler was called without parameters
+        for call in mock_sampler.run.call_args_list:
+            self.assertEqual(len(call[0][0]), 1)
+
+    def test_prebound_parameter_preservation_through_transpilation(self):
+        """Test that pre-bound parameters are preserved through transpilation."""
+        num_qubits = 3
+        base_circuit = real_amplitudes(num_qubits, reps=1)
+
+        # Bind parameters
+        parameters = np.random.rand(base_circuit.num_parameters) * 2 * np.pi
+        bound_circuit = base_circuit.assign_parameters(parameters)
+
+        # Verify circuit is bound
+        self.assertEqual(bound_circuit.num_parameters, 0)
+
+        # Create circuits (which transpiles)
+        circuits = get_circuits(num_qubits, bound_circuit)
+
+        # Verify all circuits remain parameter-free
+        for circuit in circuits:
+            self.assertEqual(circuit.num_parameters, 0)
+
+        # These circuits should be executable without additional parameters
+        samples = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=circuits,
+            shots=1024,
+            parameters=None,
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+
+        self.assertEqual(len(samples), num_qubits + 1)
+        for sample in samples:
+            self.assertTrue(np.all(sample >= 0))
+            self.assertAlmostEqual(np.sum(sample), 1.0, places=2)
+
+    def test_mixed_bound_unbound_circuits_error(self):
+        """Test that mixing bound and unbound circuits with wrong parameters raises error."""
+        num_qubits = 2
+        base_circuit = real_amplitudes(num_qubits)
+
+        # Create one bound circuit
+        parameters = np.random.rand(base_circuit.num_parameters) * 2 * np.pi
+        bound_circuit = base_circuit.assign_parameters(parameters)
+
+        # Mix bound and unbound circuits
+        circuits = [
+            bound_circuit.measure_all(inplace=False),
+            base_circuit.measure_all(inplace=False),
+            bound_circuit.measure_all(inplace=False)
+        ]
+
+        # Trying to pass parameters to mixed circuits should fail on unbound circuit
+        with self.assertRaises(Exception):
+            get_samples_noisy(
+                num_qubits=num_qubits,
+                circuits=circuits,
+                shots=1024,
+                parameters=None,
+                backend_sim=self.backend_sim,
+                error_mitigation=False
+            )
+
+    def test_empty_parameter_array_handling(self):
+        """Test handling of empty parameter arrays."""
+        num_qubits = 2
+
+        # Create a circuit with NO parameters (e.g., just |0> state)
+        simple_circuit = QuantumCircuit(num_qubits)
+        circuits = get_circuits(num_qubits, simple_circuit)
+
+        # Should work with None parameters
+        samples1 = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=circuits,
+            shots=1024,
+            parameters=None,
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+
+        # Should also work with empty array
+        samples2 = get_samples_noisy(
+            num_qubits=num_qubits,
+            circuits=circuits,
+            shots=1024,
+            parameters=np.array([]),
+            backend_sim=self.backend_sim,
+            error_mitigation=False
+        )
+
+        self.assertEqual(len(samples1), num_qubits + 1)
+        self.assertEqual(len(samples2), num_qubits + 1)
+
+        # Both should give similar results (measuring |00...0> state)
+        for s1, s2 in zip(samples1, samples2):
+            self.assertTrue(np.all(s1 >= 0))
+            self.assertTrue(np.all(s2 >= 0))
 
 if __name__ == '__main__':
     unittest.main()

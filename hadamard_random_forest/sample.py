@@ -5,7 +5,7 @@ main.py
 """
 
 from __future__ import annotations
-from typing import Dict, List, Tuple , Any
+from typing import Dict, List, Tuple, Any, Optional
 import warnings
 import functools
 
@@ -87,8 +87,8 @@ def get_samples_noisy(
     num_qubits: int,
     circuits: List[qiskit.QuantumCircuit],
     shots: int,
-    parameters: np.ndarray,
-    backend_sim: Backend,
+    parameters: Optional[np.ndarray] = None,
+    backend_sim: Backend = None,
     error_mitigation: bool = False
 ) -> List[np.ndarray]:
     """
@@ -98,7 +98,8 @@ def get_samples_noisy(
         num_qubits: Number of qubits.
         circuits: List of QuantumCircuit to transpile and run.
         shots: Number of shots per circuit execution.
-        parameters: Parameter values to assign.
+        parameters: Optional parameter values to assign. If None, assumes circuits
+                   already have parameters bound.
         backend_sim: Qiskit backend to run circuits on.
         error_mitigation: If True, perform M3 calibration and mitigation.
 
@@ -137,8 +138,9 @@ def get_samples_noisy(
                 mit.cals_from_system(mapping)
                 mapping_mit[key] = mit
 
-            # Assign parameters and execute the circuit.
-            transpiled.assign_parameters(parameters, inplace=True)
+            # Assign parameters if provided and circuit has unbound parameters
+            if parameters is not None and transpiled.parameters:
+                transpiled.assign_parameters(parameters, inplace=True)
             counts = backend_sim.run(transpiled, shots=shots).result().get_counts()
             counts_data.append((counts, mapping, key))
 
@@ -160,7 +162,9 @@ def get_samples_noisy(
     else:
         for circuit in circuits:
             transpiled = pm.run(circuit)
-            transpiled.assign_parameters(parameters, inplace=True)
+            # Assign parameters if provided and circuit has unbound parameters
+            if parameters is not None and transpiled.parameters:
+                transpiled.assign_parameters(parameters, inplace=True)
             counts = backend_sim.run(transpiled, shots=shots).result().get_counts()
             proba = np.zeros(2**num_qubits, dtype=float)
             for bitstr, count in counts.items():
@@ -217,8 +221,8 @@ def get_samples_hardware(
     num_qubits: int,
     shots: int,
     circuits: List[qiskit.QuantumCircuit],
-    parameters: np.ndarray,
-    device: Backend,
+    parameters: Optional[np.ndarray] = None,
+    device: Backend = None,
     error_mitigation: bool = True
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List[str], List[float]]:
     """
@@ -228,7 +232,8 @@ def get_samples_hardware(
         num_qubits: Number of qubits (defines vector size 2**num_qubits).
         shots: Number of shots per circuit execution.
         circuits: List of transpiled QuantumCircuit objects.
-        parameters: 1D array of parameter values to bind to each circuit.
+        parameters: Optional 1D array of parameter values to bind to each circuit.
+                   If None, assumes circuits already have parameters bound.
         device: Qiskit backend to run circuits on.
         error_mitigation: If True, perform M3 calibration and apply measurement mitigation.
 
@@ -260,7 +265,11 @@ def get_samples_hardware(
             mapping_mit[key] = mit
 
         # Run circuit on hardware
-        job = sampler.run([(circ, parameters)])
+        # Pass parameters only if provided, otherwise run circuit as-is
+        if parameters is not None:
+            job = sampler.run([(circ, parameters)])
+        else:
+            job = sampler.run([circ])
         result = job.result()[0]
         counts = result.data.meas.get_counts()
         results.append((counts, key))
